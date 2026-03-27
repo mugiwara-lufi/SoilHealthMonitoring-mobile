@@ -36,15 +36,15 @@ export const FARM_DATA = {
       id: '3', 
       name: 'Plot C', 
       crop: 'Wheat Field', 
-      status: 'Offline', 
+      status: 'Critical',
       icon: '🌾', 
-      color: '#ef4444',
+      color: '#dc2626',
       sensors: {
-        moisture: "0",
-        temp: "0",
-        battery: "0%",
-        signal: "No Signal"
-      }
+        moisture: "12", 
+        temp: "38.5",
+        battery: "10%",
+        signal: "Weak"
+  }
     }
   ]
 };

@@ -4,27 +4,45 @@ import ExploreScreen from './screens/ExploreScreen';
 import MonitorScreen from './screens/MonitorScreen';
 import LoginScreen from './screens/LoginScreen';
 import ProfileScreen from './screens/ProfileScreen';
+import { FARM_DATA } from './data/mockData';
 
 export default function App() {
-  const [user, setUser] = useState(null); // Auth State
-  const [currentScreen, setCurrentScreen] = useState('Explore'); // Navigation State
-  const [selectedPlot, setSelectedPlot] = useState(null); // Data State
+  const [user, setUser] = useState(null);
+  const [currentScreen, setCurrentScreen] = useState('Explore');
+  
+  // 1. Lifted plots state with Plot C set to Critical
+  const [plots, setPlots] = useState(FARM_DATA.plots.map(p => 
+    p.id === '3' ? { ...p, status: 'Critical', color: '#dc2626' } : p
+  ));
+  
+  const [selectedPlot, setSelectedPlot] = useState(null);
 
-  // 1. If no user is logged in, show Login Screen
   if (!user) {
     return <LoginScreen onLogin={(name) => setUser({ name })} />;
   }
 
-  // 2. Navigation Handler for Plots
   const handleSelectPlot = (plot) => {
     setSelectedPlot(plot);
     setCurrentScreen('Monitor');
+  };
+
+  // 2. Function to add plot at the BOTTOM
+  const handleAddPlot = (newPlot) => {
+    setPlots([...plots, newPlot]); 
+  };
+
+  // 3. NEW: Function to remove plot from state
+  const handleDeletePlot = (id) => {
+    setPlots(plots.filter(plot => plot.id !== id));
   };
 
   return (
     <View style={{ flex: 1 }}>
       {currentScreen === 'Explore' ? (
         <ExploreScreen 
+          plots={plots} 
+          onAddPlot={handleAddPlot} 
+          onDeletePlot={handleDeletePlot} // Passed new delete function
           onSelectPlot={handleSelectPlot} 
           onOpenProfile={() => setCurrentScreen('Profile')} 
         />
@@ -38,12 +56,8 @@ export default function App() {
         />
       )}
 
-      {/* Floating Back Button (Shared for Monitor Screen) */}
       {currentScreen === 'Monitor' && (
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => setCurrentScreen('Explore')}
-        >
+        <TouchableOpacity style={styles.backButton} onPress={() => setCurrentScreen('Explore')}>
           <Text style={styles.backText}>⬅ Back to Overview</Text>
         </TouchableOpacity>
       )}
@@ -52,18 +66,15 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  backButton: {
-    position: 'absolute',
-    bottom: 90,
-    alignSelf: 'center',
-    backgroundColor: '#1e293b',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 25,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
+  backButton: { 
+    position: 'absolute', 
+    bottom: 90, 
+    alignSelf: 'center', 
+    backgroundColor: '#1e293b', 
+    paddingHorizontal: 20, 
+    paddingVertical: 12, 
+    borderRadius: 25, 
+    elevation: 5 
   },
   backText: { color: '#fff', fontWeight: 'bold' }
 });
