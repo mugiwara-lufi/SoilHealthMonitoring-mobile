@@ -11,6 +11,10 @@ import {
 
 export default function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState('');
+  const [password, setPassword] = useState(''); // NEW: Password State
+
+  // Logic to check if both fields are filled
+  const isFormValid = username.trim().length > 0 && password.trim().length > 0;
 
   return (
     <KeyboardAvoidingView 
@@ -22,18 +26,29 @@ export default function LoginScreen({ onLogin }) {
         <Text style={styles.title}>SoilHealth Monitor</Text>
         <Text style={styles.subtitle}>Please sign in to continue</Text>
         
+        {/* Username Field */}
         <TextInput 
           style={styles.input} 
-          placeholder="Enter your name" 
+          placeholder="Enter your username" 
           placeholderTextColor="#94a3b8"
           value={username} 
-          onChangeText={setUsername} // Updates state on every keystroke
+          onChangeText={setUsername} 
+        />
+
+        {/* Password Field */}
+        <TextInput 
+          style={styles.input} 
+          placeholder="Enter password" 
+          placeholderTextColor="#94a3b8"
+          value={password} 
+          onChangeText={setPassword}
+          secureTextEntry={true} // Hides the password characters
         />
         
         <TouchableOpacity 
-          style={[styles.button, { opacity: username.length > 0 ? 1 : 0.6 }]} 
-          onPress={() => username.trim() && onLogin(username)}
-          disabled={!username.trim()}
+          style={[styles.button, { opacity: isFormValid ? 1 : 0.6 }]} 
+          onPress={() => isFormValid && onLogin(username)}
+          disabled={!isFormValid}
         >
           <Text style={styles.buttonText}>Login to Dashboard</Text>
         </TouchableOpacity>
@@ -55,7 +70,7 @@ const styles = StyleSheet.create({
     padding: 18, 
     borderRadius: 12, 
     fontSize: 16,
-    marginBottom: 20 
+    marginBottom: 5 
   },
   button: { 
     backgroundColor: '#1b5e20', 
