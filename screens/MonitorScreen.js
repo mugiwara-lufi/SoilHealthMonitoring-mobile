@@ -30,7 +30,6 @@ export default function MonitorScreen({ plotData }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* HEADER: Reverted to your original fixed color */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View>
@@ -87,7 +86,7 @@ export default function MonitorScreen({ plotData }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   header: { 
-    backgroundColor: '#1b5e20', // Back to original green
+    backgroundColor: '#1b5e20',
     padding: 25, 
     paddingTop: 40, 
     borderBottomLeftRadius: 25, 

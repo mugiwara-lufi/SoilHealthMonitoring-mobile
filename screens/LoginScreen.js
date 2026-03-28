@@ -11,7 +11,7 @@ import {
 
 export default function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState(''); // NEW: Password State
+  const [password, setPassword] = useState('');
 
   // Logic to check if both fields are filled
   const isFormValid = username.trim().length > 0 && password.trim().length > 0;
@@ -42,7 +42,7 @@ export default function LoginScreen({ onLogin }) {
           placeholderTextColor="#94a3b8"
           value={password} 
           onChangeText={setPassword}
-          secureTextEntry={true} // Hides the password characters
+          secureTextEntry={true}
         />
         
         <TouchableOpacity 

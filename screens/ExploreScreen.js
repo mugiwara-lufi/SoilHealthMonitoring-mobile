@@ -5,7 +5,7 @@ import MobileFooter from '../components/MobileFooter';
 export default function ExploreScreen({ plots, onAddPlot, onDeletePlot, onSelectPlot, onOpenProfile }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newPlotName, setNewPlotName] = useState('');
-  const [searchText, setSearchText] = useState(''); // NEW: Search State
+  const [searchText, setSearchText] = useState('');
 
   // 1. FILTER LOGIC: This filters the list by Name, Crop, or Status
   const filteredPlots = plots.filter(plot => {
@@ -117,7 +117,7 @@ export default function ExploreScreen({ plots, onAddPlot, onDeletePlot, onSelect
       </View>
 
       <FlatList
-        data={filteredPlots} // USE THE FILTERED LIST HERE
+        data={filteredPlots}
         renderItem={renderPlotItem}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listPadding}
@@ -138,7 +138,6 @@ const styles = StyleSheet.create({
   headerSubtitle: { fontSize: 14, color: '#64748b' },
   profileBtn: { width: 45, height: 45, borderRadius: 22.5, backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#1b5e20', justifyContent: 'center', alignItems: 'center' },
   
-  // Search Styles
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 10, paddingHorizontal: 15, marginBottom: 15 },
   searchInput: { flex: 1, height: 45, fontSize: 14, color: '#0f172a' },
   clearBtn: { padding: 5 },
