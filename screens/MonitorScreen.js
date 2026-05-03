@@ -6,28 +6,18 @@ import MobileFooter from '../components/MobileFooter';
 export default function MonitorScreen({ plotData }) {
   const currentPlot = plotData?.name || "Select Plot";
   const currentCrop = plotData?.crop || "N/A";
-  const currentStatus = plotData?.status || "Unknown";
-  const statusColor = plotData?.color || "#64748b";
-  
-  // Now pulling directly from the mapped backend data
   const sensors = plotData?.sensors || { moisture: "0", temp: "0", ph: "0", battery: "0%", signal: "N/A" };
 
-  const getStatusInfo = () => {
-    switch (currentStatus) {
-      case 'Optimal':
-        return { icon: '✅', title: 'All Systems Normal', sub: `Soil conditions for ${currentCrop} are optimal.` };
-      case 'Warning':
-        return { icon: '⚠️', title: 'System Warning', sub: `Action required for ${currentCrop}. Check moisture levels.` };
-      case 'Critical':
-        return { icon: '🚨', title: 'CRITICAL ALERT', sub: `Extreme conditions detected! Immediate action required.` };
-      case 'Offline':
-        return { icon: '❌', title: 'System Offline', sub: `Sensor disconnected. Check battery or signal.` };
-      default:
-        return { icon: '❓', title: 'Unknown Status', sub: 'Cannot retrieve current soil data.' };
-    }
+  // Logic to fix "Unknown Status"
+  const getDerivedStatus = () => {
+    const moisture = parseFloat(sensors.moisture);
+    if (moisture === 0) return { label: 'Offline', color: '#64748b', icon: '❌', title: 'System Offline', sub: 'Sensor disconnected.' };
+    if (moisture < 30) return { label: 'Critical', color: '#ef4444', icon: '🚨', title: 'CRITICAL ALERT', sub: 'Immediate action required!' };
+    if (moisture < 40) return { label: 'Warning', color: '#f59e0b', icon: '⚠️', title: 'System Warning', sub: 'Moisture is getting low.' };
+    return { label: 'Optimal', color: '#22c55e', icon: '✅', title: 'All Systems Normal', sub: `Conditions for ${currentCrop} are optimal.` };
   };
 
-  const statusInfo = getStatusInfo();
+  const statusInfo = getDerivedStatus();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -40,7 +30,7 @@ export default function MonitorScreen({ plotData }) {
           <Text style={styles.trafficLight}>🚦</Text>
         </View>
         <View style={styles.headerBottom}>
-          <Text style={styles.sensorStatus}>📡 {currentStatus === 'Offline' ? 'Disconnected' : 'Sensor Online'}</Text>
+          <Text style={styles.sensorStatus}>📡 {statusInfo.label === 'Offline' ? 'Disconnected' : 'Sensor Online'}</Text>
           <TouchableOpacity style={styles.refreshBtn}>
              <Text style={styles.refreshText}>🔄 Refresh</Text>
           </TouchableOpacity>
@@ -50,7 +40,7 @@ export default function MonitorScreen({ plotData }) {
       <ScrollView contentContainerStyle={styles.scrollPadding}>
         <Text style={styles.lastUpdated}>🕒 Last Updated: Just now</Text>
         
-        <View style={[styles.statusBanner, { borderLeftColor: statusColor }]}>
+        <View style={[styles.statusBanner, { borderLeftColor: statusInfo.color }]}>
           <Text style={styles.checkIcon}>{statusInfo.icon}</Text>
           <View>
             <Text style={styles.statusTitle}>{statusInfo.title}</Text>
@@ -58,18 +48,15 @@ export default function MonitorScreen({ plotData }) {
           </View>
         </View>
 
-        {/* Real-time Sensor Cards */}
         <MonitorCard label="Soil Moisture" value={sensors.moisture} unit="%" targetRange="40 - 60%" icon="💧" />
         <MonitorCard label="Soil Temperature" value={sensors.temp} unit="°C" targetRange="22 - 30°C" icon="🌡️" />
-        
-        {/* NEW: pH Level Card */}
         <MonitorCard label="Soil pH Level" value={sensors.ph} unit="" targetRange="6.0 - 7.5" icon="🧪" />
 
         <View style={styles.infoCard}>
           <Text style={styles.infoTitle}>Sensor Information</Text>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Sensor ID:</Text>
-            <Text style={styles.infoValue}>{plotData?.sensor_id || 'ESP32-001'}</Text>
+            <Text style={styles.infoValue}>{plotData?.sensor_id || 'ESP32-04'}</Text>
           </View>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Location:</Text>
@@ -89,14 +76,7 @@ export default function MonitorScreen({ plotData }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
-  header: { 
-    backgroundColor: '#1b5e20',
-    padding: 25, 
-    paddingTop: 40, 
-    borderBottomLeftRadius: 25, 
-    borderBottomRightRadius: 25,
-    zIndex: 10,
-  },
+  header: { backgroundColor: '#1b5e20', padding: 25, paddingTop: 40, borderBottomLeftRadius: 25, borderBottomRightRadius: 25, zIndex: 10 },
   headerTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 },
   title: { color: '#fff', fontSize: 26, fontWeight: 'bold' },
   subtitle: { color: '#fff', fontSize: 14, opacity: 0.9 },

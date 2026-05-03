@@ -7,13 +7,22 @@ export default function ExploreScreen({ plots, onAddPlot, onDeletePlot, onSelect
   const [newPlotName, setNewPlotName] = useState('');
   const [searchText, setSearchText] = useState('');
 
-  // 1. FILTER LOGIC: This filters the list by Name, Crop, or Status
+  // Helper to determine status based on moisture
+  const getPlotStatus = (sensors) => {
+    const moisture = parseFloat(sensors?.moisture || 0);
+    if (moisture === 0) return { label: 'OFFLINE', color: '#64748b' };
+    if (moisture < 30) return { label: 'CRITICAL', color: '#ef4444' };
+    if (moisture < 40) return { label: 'WARNING', color: '#f59e0b' };
+    return { label: 'OPTIMAL', color: '#22c55e' };
+  };
+
   const filteredPlots = plots.filter(plot => {
     const searchLower = searchText.toLowerCase();
+    const statusInfo = getPlotStatus(plot.sensors);
     return (
       plot.name.toLowerCase().includes(searchLower) ||
       plot.crop.toLowerCase().includes(searchLower) ||
-      plot.status.toLowerCase().includes(searchLower)
+      statusInfo.label.toLowerCase().includes(searchLower)
     );
   });
 
@@ -23,10 +32,9 @@ export default function ExploreScreen({ plots, onAddPlot, onDeletePlot, onSelect
       id: Math.random().toString(),
       name: newPlotName,
       crop: "New Crop",
-      status: "Offline",
       icon: "🚜",
       color: "#64748b",
-      sensors: { moisture: "0", temp: "0", battery: "0%", signal: "No Signal" }
+      sensors: { moisture: "0", temp: "0", ph: "0", battery: "0%", signal: "No Signal" }
     };
     onAddPlot(newPlot);
     setNewPlotName('');
@@ -44,26 +52,29 @@ export default function ExploreScreen({ plots, onAddPlot, onDeletePlot, onSelect
     );
   };
 
-  const renderPlotItem = ({ item }) => (
-    <View style={styles.cardWrapper}>
-      <TouchableOpacity style={styles.plotCard} onPress={() => onSelectPlot(item)}>
-        <View style={[styles.iconContainer, { backgroundColor: item.color + '20' }]}>
-          <Text style={{ fontSize: 24 }}>{item.icon}</Text>
-        </View>
-        <View style={styles.textContainer}>
-          <Text style={styles.plotName}>{item.name}</Text>
-          <Text style={styles.cropType}>{item.crop}</Text>
-        </View>
-        <View style={styles.statusBadge}>
-          <View style={[styles.statusDot, { backgroundColor: item.color }]} />
-          <Text style={[styles.statusText, { color: item.color }]}>{item.status}</Text>
-        </View>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.deleteBtn} onPress={() => confirmDelete(item.id, item.name)}>
-        <Text style={{ fontSize: 18 }}>🗑️</Text>
-      </TouchableOpacity>
-    </View>
-  );
+  const renderPlotItem = ({ item }) => {
+    const status = getPlotStatus(item.sensors);
+    return (
+      <View style={styles.cardWrapper}>
+        <TouchableOpacity style={styles.plotCard} onPress={() => onSelectPlot(item)}>
+          <View style={[styles.iconContainer, { backgroundColor: status.color + '20' }]}>
+            <Text style={{ fontSize: 24 }}>{item.icon}</Text>
+          </View>
+          <View style={styles.textContainer}>
+            <Text style={styles.plotName}>{item.name}</Text>
+            <Text style={styles.cropType}>{item.crop}</Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: status.color + '15', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }]}>
+            <View style={[styles.statusDot, { backgroundColor: status.color }]} />
+            <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.deleteBtn} onPress={() => confirmDelete(item.id, item.name)}>
+          <Text style={{ fontSize: 18 }}>🗑️</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -78,11 +89,10 @@ export default function ExploreScreen({ plots, onAddPlot, onDeletePlot, onSelect
           </TouchableOpacity>
         </View>
 
-        {/* SEARCH BAR */}
         <View style={styles.searchContainer}>
           <TextInput 
             style={styles.searchInput}
-            placeholder="Search by name, crop, or status (e.g. Optimal)..."
+            placeholder="Search by name, crop, or status..."
             value={searchText}
             onChangeText={setSearchText}
             placeholderTextColor="#94a3b8"
@@ -94,10 +104,7 @@ export default function ExploreScreen({ plots, onAddPlot, onDeletePlot, onSelect
           )}
         </View>
 
-        <TouchableOpacity 
-          style={styles.addButton} 
-          onPress={() => setShowAddForm(!showAddForm)}
-        >
+        <TouchableOpacity style={styles.addButton} onPress={() => setShowAddForm(!showAddForm)}>
           <Text style={styles.addButtonText}>{showAddForm ? "✕ Cancel" : "+ Add New Plot"}</Text>
         </TouchableOpacity>
 
@@ -121,9 +128,7 @@ export default function ExploreScreen({ plots, onAddPlot, onDeletePlot, onSelect
         renderItem={renderPlotItem}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listPadding}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>No plots found matching "{searchText}"</Text>
-        }
+        ListEmptyComponent={<Text style={styles.emptyText}>No plots found</Text>}
       />
       <MobileFooter />
     </SafeAreaView>
@@ -137,18 +142,15 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 28, fontWeight: 'bold', color: '#1b5e20' },
   headerSubtitle: { fontSize: 14, color: '#64748b' },
   profileBtn: { width: 45, height: 45, borderRadius: 22.5, backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#1b5e20', justifyContent: 'center', alignItems: 'center' },
-  
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 10, paddingHorizontal: 15, marginBottom: 15 },
   searchInput: { flex: 1, height: 45, fontSize: 14, color: '#0f172a' },
   clearBtn: { padding: 5 },
-
   addButton: { backgroundColor: '#1b5e20', padding: 12, borderRadius: 8, alignItems: 'center' },
   addButtonText: { color: '#fff', fontWeight: 'bold' },
   formContainer: { marginTop: 15, flexDirection: 'row', gap: 10 },
   input: { flex: 1, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 15, backgroundColor: '#f8fafc' },
   saveBtn: { backgroundColor: '#1e293b', padding: 12, borderRadius: 8, justifyContent: 'center' },
   saveBtnText: { color: '#fff', fontWeight: 'bold' },
-
   listPadding: { padding: 20 },
   cardWrapper: { flexDirection: 'row', alignItems: 'center', marginBottom: 15 },
   plotCard: { flex: 1, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 16, elevation: 2 },
