@@ -7,24 +7,25 @@ export default function MonitorScreen({ plotData }) {
   const currentPlot = plotData?.name || "Select Plot";
   const currentCrop = plotData?.crop || "N/A";
   const currentStatus = plotData?.status || "Unknown";
-  const statusColor = plotData?.color || "#64748b"; // Used for the banner and battery
-  const sensors = plotData?.sensors || { moisture: "0", temp: "0", battery: "0%", signal: "N/A" };
+  const statusColor = plotData?.color || "#64748b";
+  
+  // Now pulling directly from the mapped backend data
+  const sensors = plotData?.sensors || { moisture: "0", temp: "0", ph: "0", battery: "0%", signal: "N/A" };
 
-  // Logic for dynamic banner content
   const getStatusInfo = () => {
-  switch (currentStatus) {
-    case 'Optimal':
-      return { icon: '✅', title: 'All Systems Normal', sub: `Soil conditions for ${currentCrop} are optimal.` };
-    case 'Warning':
-      return { icon: '⚠️', title: 'System Warning', sub: `Action required for ${currentCrop}. Check moisture levels.` };
-    case 'Critical': // Added this
-      return { icon: '🚨', title: 'CRITICAL ALERT', sub: `Extreme conditions detected! Immediate action required.` };
-    case 'Offline':
-      return { icon: '❌', title: 'System Offline', sub: `Sensor disconnected. Check battery or signal.` };
-    default:
-      return { icon: '❓', title: 'Unknown Status', sub: 'Cannot retrieve current soil data.' };
-  }
-};
+    switch (currentStatus) {
+      case 'Optimal':
+        return { icon: '✅', title: 'All Systems Normal', sub: `Soil conditions for ${currentCrop} are optimal.` };
+      case 'Warning':
+        return { icon: '⚠️', title: 'System Warning', sub: `Action required for ${currentCrop}. Check moisture levels.` };
+      case 'Critical':
+        return { icon: '🚨', title: 'CRITICAL ALERT', sub: `Extreme conditions detected! Immediate action required.` };
+      case 'Offline':
+        return { icon: '❌', title: 'System Offline', sub: `Sensor disconnected. Check battery or signal.` };
+      default:
+        return { icon: '❓', title: 'Unknown Status', sub: 'Cannot retrieve current soil data.' };
+    }
+  };
 
   const statusInfo = getStatusInfo();
 
@@ -47,9 +48,8 @@ export default function MonitorScreen({ plotData }) {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollPadding}>
-        <Text style={styles.lastUpdated}>🕒 Last Updated: 0 seconds ago</Text>
+        <Text style={styles.lastUpdated}>🕒 Last Updated: Just now</Text>
         
-        {/* DYNAMIC STATUS BANNER: This still changes based on the plot */}
         <View style={[styles.statusBanner, { borderLeftColor: statusColor }]}>
           <Text style={styles.checkIcon}>{statusInfo.icon}</Text>
           <View>
@@ -58,22 +58,26 @@ export default function MonitorScreen({ plotData }) {
           </View>
         </View>
 
+        {/* Real-time Sensor Cards */}
         <MonitorCard label="Soil Moisture" value={sensors.moisture} unit="%" targetRange="40 - 60%" icon="💧" />
         <MonitorCard label="Soil Temperature" value={sensors.temp} unit="°C" targetRange="22 - 30°C" icon="🌡️" />
+        
+        {/* NEW: pH Level Card */}
+        <MonitorCard label="Soil pH Level" value={sensors.ph} unit="" targetRange="6.0 - 7.5" icon="🧪" />
 
         <View style={styles.infoCard}>
           <Text style={styles.infoTitle}>Sensor Information</Text>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Sensor ID:</Text>
-            <Text style={styles.infoValue}>ESP32-{plotData?.id || '001'}</Text>
+            <Text style={styles.infoValue}>{plotData?.sensor_id || 'ESP32-001'}</Text>
           </View>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Location:</Text>
-            <Text style={[styles.infoValue, { textAlign: 'right' }]}>{currentPlot}, North Section</Text>
+            <Text style={[styles.infoValue, { textAlign: 'right' }]}>{plotData?.location || 'Cagayan de Oro'}</Text>
           </View>
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Battery:</Text>
-            <Text style={[styles.infoValue, { color: statusColor }]}>{sensors.battery}</Text>
+            <Text style={styles.infoLabel}>Battery Status:</Text>
+            <Text style={[styles.infoValue, { color: sensors.battery === '0%' ? 'red' : '#1b5e20' }]}>{sensors.battery}</Text>
           </View>
         </View>
       </ScrollView>

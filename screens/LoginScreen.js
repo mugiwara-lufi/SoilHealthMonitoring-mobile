@@ -47,7 +47,7 @@ export default function LoginScreen({ onLogin }) {
         
         <TouchableOpacity 
           style={[styles.button, { opacity: isFormValid ? 1 : 0.6 }]} 
-          onPress={() => isFormValid && onLogin(username)}
+          onPress={() => isFormValid && onLogin(username, password)} // ADD PASSWORD HERE
           disabled={!isFormValid}
         >
           <Text style={styles.buttonText}>Login to Dashboard</Text>
