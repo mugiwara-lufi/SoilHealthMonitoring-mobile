@@ -2,23 +2,39 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView, TextInput, Alert } from 'react-native';
 import MobileFooter from '../components/MobileFooter';
 
-export default function ExploreScreen({ plots, onAddPlot, onDeletePlot, onSelectPlot, onOpenProfile }) {
+export default function ExploreScreen({ 
+  plots, 
+  onAddPlot, 
+  onDeletePlot, 
+  onSelectPlot, 
+  onOpenProfile,
+  currentTab,
+  onSelectTab 
+}) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newPlotName, setNewPlotName] = useState('');
   const [searchText, setSearchText] = useState('');
 
-  // Helper to determine status based on moisture
-  const getPlotStatus = (sensors) => {
-    const moisture = parseFloat(sensors?.moisture || 0);
-    if (moisture === 0) return { label: 'OFFLINE', color: '#64748b' };
+  // Updated status checker: defaults to OFFLINE if no sensor is attached or reading is N/A
+  const getPlotStatus = (plot) => {
+    const hasSensor = Boolean(plot?.sensor_id && plot?.sensor_id !== "N/A");
+    const rawMoisture = plot?.sensors?.moisture;
+
+    if (!hasSensor || rawMoisture === undefined || rawMoisture === null || rawMoisture === "N/A" || rawMoisture === "") {
+      return { label: 'OFFLINE', color: '#64748b' };
+    }
+
+    const moisture = parseFloat(rawMoisture);
+    if (isNaN(moisture)) return { label: 'OFFLINE', color: '#64748b' };
     if (moisture < 30) return { label: 'CRITICAL', color: '#ef4444' };
     if (moisture < 40) return { label: 'WARNING', color: '#f59e0b' };
+
     return { label: 'OPTIMAL', color: '#22c55e' };
   };
 
   const filteredPlots = plots.filter(plot => {
     const searchLower = searchText.toLowerCase();
-    const statusInfo = getPlotStatus(plot.sensors);
+    const statusInfo = getPlotStatus(plot);
     return (
       plot.name.toLowerCase().includes(searchLower) ||
       plot.crop.toLowerCase().includes(searchLower) ||
@@ -34,7 +50,8 @@ export default function ExploreScreen({ plots, onAddPlot, onDeletePlot, onSelect
       crop: "New Crop",
       icon: "🚜",
       color: "#64748b",
-      sensors: { moisture: "0", temp: "0", ph: "0", battery: "0%", signal: "No Signal" }
+      sensor_id: "N/A",
+      sensors: { moisture: "N/A", temp: "N/A", ph: "N/A", battery: "0%", signal: "No Signal" }
     };
     onAddPlot(newPlot);
     setNewPlotName('');
@@ -53,7 +70,7 @@ export default function ExploreScreen({ plots, onAddPlot, onDeletePlot, onSelect
   };
 
   const renderPlotItem = ({ item }) => {
-    const status = getPlotStatus(item.sensors);
+    const status = getPlotStatus(item);
     return (
       <View style={styles.cardWrapper}>
         <TouchableOpacity style={styles.plotCard} onPress={() => onSelectPlot(item)}>
@@ -130,7 +147,8 @@ export default function ExploreScreen({ plots, onAddPlot, onDeletePlot, onSelect
         contentContainerStyle={styles.listPadding}
         ListEmptyComponent={<Text style={styles.emptyText}>No plots found</Text>}
       />
-      <MobileFooter />
+
+      <MobileFooter currentTab={currentTab || 'Farm'} onSelectTab={onSelectTab} />
     </SafeAreaView>
   );
 }
