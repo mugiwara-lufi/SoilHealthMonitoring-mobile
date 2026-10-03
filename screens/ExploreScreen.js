@@ -15,7 +15,7 @@ export default function ExploreScreen({
   const [newPlotName, setNewPlotName] = useState('');
   const [searchText, setSearchText] = useState('');
 
-  // Updated status checker: defaults to OFFLINE if no sensor is attached or reading is N/A
+  // Status checker: defaults to OFFLINE if no sensor is attached or reading is N/A
   const getPlotStatus = (plot) => {
     const hasSensor = Boolean(plot?.sensor_id && plot?.sensor_id !== "N/A");
     const rawMoisture = plot?.sensors?.moisture;
@@ -51,7 +51,18 @@ export default function ExploreScreen({
       icon: "🚜",
       color: "#64748b",
       sensor_id: "N/A",
-      sensors: { moisture: "N/A", temp: "N/A", ph: "N/A", battery: "0%", signal: "No Signal" }
+      records: [],
+      sensors: { 
+        moisture: "N/A", 
+        temp: "N/A", 
+        ph: "N/A", 
+        humidity: "N/A",
+        nitrogen: "N/A",
+        phosphorus: "N/A",
+        potassium: "N/A",
+        battery: "0%", 
+        signal: "No Signal" 
+      }
     };
     onAddPlot(newPlot);
     setNewPlotName('');

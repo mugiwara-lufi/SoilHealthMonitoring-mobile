@@ -47,10 +47,18 @@ export default function App() {
               location: plot.location || "N/A",
               sensor_id: plot.sensor_id || "N/A",
               
+              // Retain raw records array from Django REST API
+              records: plot.records || [],
+
+              // Mapped sensor fields for all 8 parameters
               sensors: {
                 moisture: latest ? (latest.soil_moisture ?? latest.moisture ?? "N/A") : "N/A", 
                 temp: latest ? (latest.soil_temperature ?? latest.temperature ?? "N/A") : "N/A", 
-                ph: latest ? (latest.ph_level ?? latest.ph ?? "N/A") : "N/A",           
+                ph: latest ? (latest.ph_level ?? latest.ph ?? "N/A") : "N/A", 
+                humidity: latest ? (latest.humidity ?? latest.soil_humidity ?? "N/A") : "N/A",
+                nitrogen: latest ? (latest.nitrogen ?? latest.n ?? "N/A") : "N/A",
+                phosphorus: latest ? (latest.phosphorus ?? latest.p ?? "N/A") : "N/A",
+                potassium: latest ? (latest.potassium ?? latest.k ?? "N/A") : "N/A",
                 battery: latest ? `${latest.battery_percentage ?? 0}%` : "0%",
                 signal: "Strong"
               }
