@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
+
 import ExploreScreen from './screens/ExploreScreen';
+import AdminScreen from './screens/AdminScreen'; 
 import MapScreen from './screens/MapScreen';
 import HistoryScreen from './screens/HistoryScreen';
 import MonitorScreen from './screens/MonitorScreen';
@@ -16,6 +18,24 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState('Explore');
   const [plots, setPlots] = useState([]);
   const [selectedPlot, setSelectedPlot] = useState(null);
+  const [usersList, setUsersList] = useState([]);
+
+  const fetchUsers = async (activeToken) => {
+    try {
+      const response = await fetch(`${BASE_URL}/users/`, {
+        headers: {
+          'Authorization': `Token ${activeToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setUsersList(data);
+      }
+    } catch (error) {
+      console.error("Fetch Users Error:", error);
+    }
+  };
 
   const fetchPlots = async (manualToken = null) => {
     const activeToken = manualToken || token;
@@ -41,16 +61,13 @@ export default function App() {
               id: plot.id.toString(),
               name: plot.name,
               crop: plot.crop_type || "Rice",
+              farmer_username: plot.farmer_username || "Unassigned",
               status: (plot.sensor_id && plot.sensor_id !== "N/A" && latest) ? "Online" : "Offline",
               icon: "🌱",
               color: "#1b5e20",
               location: plot.location || "N/A",
               sensor_id: plot.sensor_id || "N/A",
-              
-              // Retain raw records array from Django REST API
               records: plot.records || [],
-
-              // Mapped sensor fields for all 8 parameters
               sensors: {
                 moisture: latest ? (latest.soil_moisture ?? latest.moisture ?? "N/A") : "N/A", 
                 temp: latest ? (latest.soil_temperature ?? latest.temperature ?? "N/A") : "N/A", 
@@ -79,8 +96,11 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (token && plots.length === 0) {
+    if (token) {
       fetchPlots();
+      if (user?.role === 'admin' || user?.is_staff) {
+        fetchUsers(token);
+      }
     }
   }, [token]);
 
@@ -99,8 +119,29 @@ export default function App() {
 
       if (response.ok && data.token) {
         setToken(data.token); 
-        setUser({ name: username, email: `${username}@jjmap.ph` });
+        
+        const userRole = data.role || (data.is_staff ? 'admin' : 'user');
+        const loggedUsername = data.username || username;
+
+        const authUser = { 
+          id: data.user_id || null,
+          username: loggedUsername,
+          name: loggedUsername, 
+          email: data.email || `${loggedUsername}@jjmap.ph`,
+          role: userRole,
+          is_staff: data.is_staff || userRole === 'admin',
+          is_active: true
+        };
+
+        setUser(authUser);
         fetchPlots(data.token); 
+
+        if (authUser.is_staff) {
+          fetchUsers(data.token);
+          setCurrentScreen('Admin');
+        } else {
+          setCurrentScreen('Explore');
+        }
       } else {
         Alert.alert("Login Failed", data.non_field_errors?.[0] || "Invalid credentials");
       }
@@ -114,6 +155,7 @@ export default function App() {
     setUser(null);
     setToken(null);
     setPlots([]); 
+    setUsersList([]);
     setSelectedPlot(null);
     setCurrentScreen('Explore');
   };
@@ -125,7 +167,7 @@ export default function App() {
 
   const handleSelectTab = (tabId) => {
     if (tabId === 'Farm') {
-      setCurrentScreen('Explore');
+      setCurrentScreen(user?.role === 'admin' || user?.is_staff ? 'Admin' : 'Explore');
     } else if (tabId === 'Settings') {
       setCurrentScreen('Profile');
     } else if (tabId === 'Map') {
@@ -136,7 +178,7 @@ export default function App() {
   };
 
   const getCurrentTabName = () => {
-    if (currentScreen === 'Explore') return 'Farm';
+    if (currentScreen === 'Explore' || currentScreen === 'Admin') return 'Farm';
     if (currentScreen === 'Profile') return 'Settings';
     return currentScreen;
   };
@@ -243,22 +285,70 @@ export default function App() {
     }
   };
 
+  const handleAssignPlots = async (userId, plotIds) => {
+    try {
+      const response = await fetch(`${BASE_URL}/users/${userId}/assign-plots/`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Token ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ plot_ids: plotIds })
+      });
+      if (response.ok) {
+        Alert.alert("Success", "Plots successfully assigned!");
+        fetchPlots();
+      } else {
+        Alert.alert("Error", "Failed to assign plots.");
+      }
+    } catch (error) {
+      console.error("Assign Plots Error:", error);
+    }
+  };
+
   if (!user) {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
-  return (
-    <View style={{ flex: 1 }}>
-      {currentScreen === 'Explore' ? (
-        <ExploreScreen 
+  const currentAdminUsername = user.username || user.name;
+  const currentAdminId = user.id;
+
+  const renderDashboardScreen = () => {
+    if (currentScreen === 'Admin') {
+      return (
+        <AdminScreen 
+          currentAdminId={currentAdminId}
+          currentAdminUsername={currentAdminUsername}
+          users={usersList}
           plots={plots} 
           onAddPlot={handleAddPlot} 
           onDeletePlot={handleDeletePlot} 
           onSelectPlot={handleSelectPlot} 
+          onAssignPlots={handleAssignPlots}
           onOpenProfile={() => setCurrentScreen('Profile')} 
           currentTab={getCurrentTabName()}
-          onSelectTab={handleSelectTab}
+          onSelectTab={handleSelectTab} 
+          onLogout={handleLogout}
         />
+      );
+    }
+    return (
+      <ExploreScreen 
+        plots={plots} 
+        onAddPlot={handleAddPlot} 
+        onDeletePlot={handleDeletePlot} 
+        onSelectPlot={handleSelectPlot} 
+        onOpenProfile={() => setCurrentScreen('Profile')} 
+        currentTab={getCurrentTabName()}
+        onSelectTab={handleSelectTab}
+      />
+    );
+  };
+
+  return (
+    <View style={{ flex: 1 }}>
+      {currentScreen === 'Explore' || currentScreen === 'Admin' ? (
+        renderDashboardScreen()
       ) : currentScreen === 'Map' ? (
         <MapScreen 
           plots={plots}
@@ -284,14 +374,17 @@ export default function App() {
         <ProfileScreen 
           user={user} 
           onLogout={handleLogout} 
-          onBack={() => setCurrentScreen('Explore')} 
+          onBack={() => setCurrentScreen((user?.role === 'admin' || user?.is_staff) ? 'Admin' : 'Explore')} 
           currentTab={getCurrentTabName()}
           onSelectTab={handleSelectTab}
         />
       )}
 
       {currentScreen === 'Monitor' && (
-        <TouchableOpacity style={styles.backButton} onPress={() => setCurrentScreen('Explore')}>
+        <TouchableOpacity 
+          style={styles.backButton} 
+          onPress={() => setCurrentScreen((user?.role === 'admin' || user?.is_staff) ? 'Admin' : 'Explore')}
+        >
           <Text style={styles.backText}>⬅ Back to Overview</Text>
         </TouchableOpacity>
       )}
