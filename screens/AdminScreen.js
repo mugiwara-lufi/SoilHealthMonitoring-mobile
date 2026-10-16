@@ -213,7 +213,7 @@ export default function AdminScreen({
             <View style={styles.actionRow}>
               <TouchableOpacity 
                 style={styles.appSwitchBtn} 
-                onPress={() => onSelectTab?.('Farm')}
+                onPress={() => onSelectTab?.('Explore')}
                 accessibilityRole="button"
                 accessibilityLabel="Switch to Farmer App"
               >

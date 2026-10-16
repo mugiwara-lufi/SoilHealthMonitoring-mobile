@@ -13,6 +13,8 @@ export default function ExploreScreen({
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newPlotName, setNewPlotName] = useState('');
+  const [newCropType, setNewCropType] = useState('');
+  const [newLocation, setNewLocation] = useState('');
   const [searchText, setSearchText] = useState('');
 
   // Status checker: defaults to OFFLINE if no sensor is attached or reading is N/A
@@ -32,7 +34,7 @@ export default function ExploreScreen({
     return { label: 'OPTIMAL', color: '#22c55e' };
   };
 
-  const filteredPlots = plots.filter(plot => {
+  const filteredPlots = (plots || []).filter(plot => {
     const searchLower = searchText.toLowerCase();
     const statusInfo = getPlotStatus(plot);
     return (
@@ -42,32 +44,56 @@ export default function ExploreScreen({
     );
   });
 
-  const submitNewPlot = () => {
-    if (newPlotName.trim() === '') return;
-    const newPlot = {
-      id: Math.random().toString(),
-      name: newPlotName,
-      crop: "New Crop",
-      icon: "🚜",
-      color: "#64748b",
-      sensor_id: "N/A",
-      records: [],
-      sensors: { 
-        moisture: "N/A", 
-        temp: "N/A", 
-        ph: "N/A", 
-        humidity: "N/A",
-        nitrogen: "N/A",
-        phosphorus: "N/A",
-        potassium: "N/A",
-        battery: "0%", 
-        signal: "No Signal" 
-      }
-    };
-    onAddPlot(newPlot);
-    setNewPlotName('');
-    setShowAddForm(false);
+
+const submitNewPlot = async () => {
+  const plotName = newPlotName.trim();
+  const cropType = newCropType.trim();
+  const location = newLocation.trim();
+
+  if (!plotName || !cropType || !location) {
+    Alert.alert(
+      'Missing Information',
+      'Please enter the plot name, crop type, and location.'
+    );
+    return;
+  }
+
+  const newPlot = {
+    name: plotName,
+    crop: cropType,
+    location: location,
+    sensor_id: null,
+    icon: '🚜',
+    color: '#64748b',
+    records: [],
+    sensors: {
+      moisture: 'N/A',
+      temp: 'N/A',
+      ph: 'N/A',
+      humidity: 'N/A',
+      nitrogen: 'N/A',
+      phosphorus: 'N/A',
+      potassium: 'N/A',
+      battery: '0%',
+      signal: 'No Signal',
+    },
   };
+
+  try {
+    const saved = await onAddPlot(newPlot);
+
+    if (saved) {
+      setNewPlotName('');
+      setNewCropType('');
+      setNewLocation('');
+      setShowAddForm(false);
+    }
+  } catch (error) {
+    console.error('Submit New Plot Error:', error);
+    Alert.alert('Error', 'Could not add the plot. Please try again.');
+  }
+};
+
 
   const confirmDelete = (id, name) => {
     Alert.alert(
@@ -91,6 +117,7 @@ export default function ExploreScreen({
           <View style={styles.textContainer}>
             <Text style={styles.plotName}>{item.name}</Text>
             <Text style={styles.cropType}>{item.crop}</Text>
+            <Text style={styles.cropType}>📍 {item.location || 'No location'}</Text>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: status.color + '15', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }]}>
             <View style={[styles.statusDot, { backgroundColor: status.color }]} />
@@ -138,17 +165,39 @@ export default function ExploreScreen({
 
         {showAddForm && (
           <View style={styles.formContainer}>
-            <TextInput 
+            <TextInput
               style={styles.input}
-              placeholder="Enter Plot Name"
+              placeholder="Enter Plot Name *"
+              placeholderTextColor="#94a3b8"
               value={newPlotName}
               onChangeText={setNewPlotName}
             />
-            <TouchableOpacity style={styles.saveBtn} onPress={submitNewPlot}>
-              <Text style={styles.saveBtnText}>Save</Text>
+
+            <TextInput
+              style={styles.input}
+              placeholder="Enter Crop Type *"
+              placeholderTextColor="#94a3b8"
+              value={newCropType}
+              onChangeText={setNewCropType}
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Enter Location *"
+              placeholderTextColor="#94a3b8"
+              value={newLocation}
+              onChangeText={setNewLocation}
+            />
+
+            <TouchableOpacity
+              style={styles.saveBtn}
+              onPress={submitNewPlot}
+            >
+              <Text style={styles.saveBtnText}>Save Plot</Text>
             </TouchableOpacity>
           </View>
         )}
+
       </View>
 
       <FlatList
@@ -176,8 +225,8 @@ const styles = StyleSheet.create({
   clearBtn: { padding: 5 },
   addButton: { backgroundColor: '#1b5e20', padding: 12, borderRadius: 8, alignItems: 'center' },
   addButtonText: { color: '#fff', fontWeight: 'bold' },
-  formContainer: { marginTop: 15, flexDirection: 'row', gap: 10 },
-  input: { flex: 1, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 15, backgroundColor: '#f8fafc' },
+  formContainer: {marginTop: 15, flexDirection: 'column', gap: 10},
+  input: {width: '100%', minHeight: 45, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 15, paddingVertical: 10, backgroundColor: '#f8fafc', color: '#0f172a'},
   saveBtn: { backgroundColor: '#1e293b', padding: 12, borderRadius: 8, justifyContent: 'center' },
   saveBtnText: { color: '#fff', fontWeight: 'bold' },
   listPadding: { padding: 20 },
