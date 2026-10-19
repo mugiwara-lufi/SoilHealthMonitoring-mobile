@@ -16,7 +16,7 @@ import MonitorScreen from './screens/MonitorScreen';
 import LoginScreen from './screens/LoginScreen';
 import ProfileScreen from './screens/ProfileScreen';
 
-const BASE_URL = 'http://192.168.5.66:8000/api';
+const BASE_URL = 'http://192.168.11.28:8000/api';
 const AUTH_URL = `${BASE_URL}/api-token-auth/`;
 
 export default function App() {

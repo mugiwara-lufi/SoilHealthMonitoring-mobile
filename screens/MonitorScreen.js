@@ -10,39 +10,35 @@ import {
   TouchableOpacity, 
   Dimensions, 
   ActivityIndicator,
-  Modal 
+  Modal,
+  Alert 
 } from 'react-native';
 import { BarChart, LineChart } from 'react-native-chart-kit';
 import MobileFooter from '../components/MobileFooter';
 
 const screenWidth = Dimensions.get('window').width - 30;
-const API_BASE_URL = 'http://192.168.5.66:8000'; // Replace with your environment/config variable
+const API_BASE_URL = 'http://192.168.11.28:8000'; // Replace with your environment/config variable
 
-export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSensor, currentTab, onSelectTab, onBack }) {
+// Supabase Direct Credentials
+const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_cyQgbi_v02dkhswabEBWoQ_3exGPlaK';
+
+export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSensor, currentTab, onSelectTab, onBack, onUpdatePlotSensor }) {
   const currentPlot = plotData?.name || "Plot";
   const currentCrop = plotData?.crop || plotData?.crop_type || "Crop";
   const plotSize = plotData?.size || "2.5 hectares";
 
-  // Parse numeric hectare size for fertilizer scaling fallback
   const parsedHectares = parseFloat(plotSize) || 2.5;
-
-  // 1. Get records array from Django API or fallback to single object/mock
-  const recordsArray = Array.isArray(plotData?.records) ? plotData.records : [];
-  const latestRecord = recordsArray.length > 0 
-    ? recordsArray[0] 
-    : (plotData?.sensors || null);
-
-  // Debug output
-  console.log("RECEIVED RECORD IN MONITOR SCREEN:", latestRecord);
-
-  const hasSensor = Boolean(
-    plotData?.sensor_id && 
-    plotData?.sensor_id !== "N/A" && 
-    latestRecord !== null
-  );
 
   const [loadingCharts, setLoadingCharts] = useState(false);
   const [showOptimizeModal, setShowOptimizeModal] = useState(false);
+  const [showSensorModal, setShowSensorModal] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [availableSensors, setAvailableSensors] = useState([]);
+  
+  // Local states for immediate UI updates
+  const [activeSensorId, setActiveSensorId] = useState(null);
+  const [supabaseLatestRecord, setSupabaseLatestRecord] = useState(null);
 
   const [weeklyData, setWeeklyData] = useState({
     labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
@@ -53,14 +49,57 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
     values: [5.2, 5.4, 5.6, 5.8, 5.9, 5.7, 5.6]
   });
 
+  // Sync local active sensor with parent plotData initially
+  useEffect(() => {
+    if (plotData?.sensor_id && plotData.sensor_id !== 'N/A') {
+      setActiveSensorId(plotData.sensor_id);
+    }
+  }, [plotData?.sensor_id]);
+
+  // Fetch live sensor record from Supabase 
+  const fetchSupabaseLiveRecord = async (targetSensorId) => {
+    const sId = targetSensorId || activeSensorId;
+    if (!sId || sId === 'N/A') {
+      setSupabaseLatestRecord(null);
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/soil_records?sensor_id=eq.${encodeURIComponent(sId)}&order=timestamp.desc&limit=1`,
+        {
+          method: 'GET',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setSupabaseLatestRecord(data[0]);
+        } else {
+          setSupabaseLatestRecord(null);
+        }
+      }
+    } catch (err) {
+      console.log("Error fetching live record from Supabase:", err);
+    }
+  };
+
   const fetchAnalytics = async () => {
     if (!plotData?.id) return;
     setLoadingCharts(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/plots/${plotData.id}/ph-analytics/`);
-      const data = await response.json();
-      if (data.weekly) setWeeklyData(data.weekly);
-      if (data.hourly) setHourlyData(data.hourly);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.weekly) setWeeklyData(data.weekly);
+        if (data.hourly) setHourlyData(data.hourly);
+      }
     } catch (error) {
       console.log("Error fetching pH analytics:", error);
     } finally {
@@ -70,20 +109,140 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
 
   useEffect(() => {
     fetchAnalytics();
-  }, [plotData?.id]);
+    if (activeSensorId) fetchSupabaseLiveRecord(activeSensorId);
+  }, [plotData?.id, activeSensorId]);
 
   const handleManualRefresh = () => {
     fetchAnalytics();
+    fetchSupabaseLiveRecord(activeSensorId);
     if (onRefreshData) onRefreshData();
   };
 
-  // Helper to safely extract numeric values from both Django API & legacy mock keys
+  const latestRecord = supabaseLatestRecord 
+    || (Array.isArray(plotData?.records) && plotData.records.length > 0 ? plotData.records[0] : (plotData?.sensors || null));
+
+  const hasSensor = Boolean(activeSensorId && activeSensorId !== "N/A");
+
+  // PATCH request to update `plot_id` in Supabase when connecting/disconnecting
+  const updateSupabasePlotId = async (sensorId, plotId) => {
+    try {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/soil_records?sensor_id=eq.${encodeURIComponent(sensorId)}`, 
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({ plot_id: plotId }) // Links or unlinks plot_id
+        }
+      );
+    } catch (err) {
+      console.log("Error updating Supabase plot_id:", err);
+    }
+  };
+
+  // Fetch all available active sensors from Supabase
+  const handleConnectOrDisconnect = async () => {
+    if (hasSensor) {
+      Alert.alert(
+        "Disconnect Sensor",
+        `Are you sure you want to disconnect sensor "${activeSensorId}" from ${currentPlot}?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { 
+            text: "Disconnect", 
+            style: "destructive", 
+            onPress: async () => {
+              const prevSensorId = activeSensorId;
+              
+              // Optimistic UI updates
+              setActiveSensorId(null);
+              setSupabaseLatestRecord(null);
+
+              // Unlink from Supabase
+              await updateSupabasePlotId(prevSensorId, null);
+
+              if (onDisconnectSensor) onDisconnectSensor();
+              if (onRefreshData) onRefreshData();
+            } 
+          }
+        ]
+      );
+      return;
+    }
+
+    setConnecting(true);
+    setShowSensorModal(true);
+
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=100`, 
+        {
+          method: 'GET',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      const records = await response.json();
+
+      if (Array.isArray(records) && records.length > 0) {
+        const uniqueSensorsMap = {};
+        records.forEach(rec => {
+          const sId = rec.sensor_id || "SENSOR_001";
+          if (!uniqueSensorsMap[sId]) {
+            uniqueSensorsMap[sId] = {
+              sensor_id: sId,
+              battery: rec.battery_percentage ?? rec.battery ?? 'N/A',
+              timestamp: rec.timestamp ? new Date(rec.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recent'
+            };
+          }
+        });
+        setAvailableSensors(Object.values(uniqueSensorsMap));
+      } else {
+        setAvailableSensors([]);
+      }
+    } catch (error) {
+      console.log("Error fetching available sensors:", error);
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  // Assign chosen sensor and update UI & DB
+  const handleSelectSensor = async (sensorId) => {
+    setShowSensorModal(false);
+    
+    // 1. Instantly update UI states
+    setActiveSensorId(sensorId);
+    
+    // 2. Link plot_id in Supabase
+    await updateSupabasePlotId(sensorId, plotData.id);
+
+    // 3. Inform parent (Django backend)
+    if (onUpdatePlotSensor) {
+      onUpdatePlotSensor(plotData.id, sensorId);
+    }
+
+    // 4. Fetch the data right away
+    await fetchSupabaseLiveRecord(sensorId);
+    
+    if (onRefreshData) onRefreshData();
+    Alert.alert("Sensor Linked", `Successfully linked ${sensorId} to ${currentPlot}`);
+  };
+
   const getSensorVal = (rec, ...keys) => {
     if (!rec) return null;
     for (const key of keys) {
       const val = key.split('.').reduce((obj, k) => obj?.[k], rec);
-      if (val !== undefined && val !== null && val !== '') {
-        // Strip string noise (e.g. "90%" -> 90)
+      // Strictly avoid strings that literally say "N/A"
+      if (val !== undefined && val !== null && val !== '' && val !== 'N/A') {
         const parsed = parseFloat(String(val).replace(/[^0-9.-]/g, ''));
         if (!isNaN(parsed)) {
           return parsed;
@@ -93,11 +252,10 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
     return null;
   };
 
-  // Extract sensors with Django key priorities, with fallback to legacy keys
   const sensors = {
-    ph: getSensorVal(latestRecord, 'ph_level', 'ph', 'phLevel'),
-    moisture: getSensorVal(latestRecord, 'soil_moisture', 'moisture', 'soilMoisture'),
-    humidity: getSensorVal(latestRecord, 'humidity', 'soil_humidity', 'air_humidity', 'env_humidity'),
+    ph: getSensorVal(latestRecord, 'ph_level', 'ph', 'phLevel', 'soil_ph'),
+    moisture: getSensorVal(latestRecord, 'soil_moisture', 'moisture', 'soilMoisture', 'humidity'),
+    ec: getSensorVal(latestRecord, 'ec', 'soil_ec', 'electrical_conductivity'),
     temp: getSensorVal(latestRecord, 'soil_temperature', 'temp', 'temperature', 'soilTemp'),
     nitrogen: getSensorVal(latestRecord, 'nitrogen', 'n', 'n_level', 'npk.n', 'npk.nitrogen'),
     phosphorus: getSensorVal(latestRecord, 'phosphorus', 'p', 'p_level', 'npk.p', 'npk.phosphorus'),
@@ -105,9 +263,6 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
     battery: getSensorVal(latestRecord, 'battery_percentage', 'battery', 'battery_level', 'batteryLevel'),
   };
 
-  console.log("Current Sensors State:", sensors);
-
-  // Dynamic Status Helper for pH Level
   const getPhStatus = (ph) => {
     if (ph === null || ph === undefined) return { label: 'Unknown', color: '#64748b' };
     const num = parseFloat(ph);
@@ -117,7 +272,14 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
     return { label: 'Alkaline', color: '#3b82f6' };
   };
 
-  // Dynamic Status Helper for NPK Levels
+  const getEcStatus = (ec) => {
+    if (ec === null || ec === undefined) return { label: 'Unknown', color: '#64748b' };
+    const num = parseFloat(ec);
+    if (num < 200) return { label: 'Low Nutrients', color: '#f97316' };
+    if (num <= 1200) return { label: 'OPTIMAL', color: '#22c55e' };
+    return { label: 'High Salinity', color: '#ef4444' };
+  };
+
   const getNpkStatus = (n, p, k) => {
     if (n === null && p === null && k === null) return { label: 'Unknown', color: '#64748b' };
     if ((n !== null && n < 30) || (p !== null && p < 20) || (k !== null && k < 30)) {
@@ -127,9 +289,9 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
   };
 
   const phStatus = getPhStatus(sensors.ph);
+  const ecStatus = getEcStatus(sensors.ec);
   const npkStatus = getNpkStatus(sensors.nitrogen, sensors.phosphorus, sensors.potassium);
 
-  // Dynamic Calculations for Modal Recommendations
   const limeSacksNeeded = Math.max(1, Math.round(parsedHectares * 1.5));
   const ureaSacksNeeded = Math.max(1, Math.round(parsedHectares * 0.8));
 
@@ -137,21 +299,16 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
-        {/* Header Block */}
         <View style={styles.headerCard}>
           <TouchableOpacity style={styles.backButton} onPress={onBack}>
             <Text style={styles.backIcon}>←</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>{currentPlot} - Soil Analytics</Text>
-          <Text style={styles.headerSubtitle}>{currentCrop} • Real-time Monitoring</Text>
+          <Text style={styles.headerTitle}>{currentPlot} Soil Analytics</Text>
+          <Text style={styles.headerSubtitle}>{currentCrop} Real-time Monitoring</Text>
         </View>
 
-        {/* Dynamic Metric Grid */}
         <View style={styles.gridContainer}>
-          
-          {/* TOP ROW: Soil pH, Moisture, Humidity */}
           <View style={styles.gridRow}>
-            {/* Soil pH */}
             <View style={styles.metricCard}>
               <View style={[styles.iconContainer, { backgroundColor: '#fee2e2' }]}>
                 <Text style={styles.cardEmoji}>🧪</Text>
@@ -165,7 +322,6 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
               </Text>
             </View>
 
-            {/* Moisture */}
             <View style={styles.metricCard}>
               <View style={[styles.iconContainer, { backgroundColor: '#dbeafe' }]}>
                 <Text style={styles.cardEmoji}>💧</Text>
@@ -177,23 +333,19 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
               <Text style={[styles.cardStatus, { color: '#2563eb' }]}>OPTIMAL</Text>
             </View>
 
-            {/* Humidity */}
             <View style={styles.metricCard}>
               <View style={[styles.iconContainer, { backgroundColor: '#e0e7ff' }]}>
-                <Text style={styles.cardEmoji}>💨</Text>
+                <Text style={styles.cardEmoji}>⚡</Text>
               </View>
-              <Text style={styles.cardLabel}>Humidity</Text>
+              <Text style={styles.cardLabel}>EC</Text>
               <Text style={styles.cardValue}>
-                {sensors.humidity !== null ? `${Math.round(sensors.humidity)}%` : 'N/A'}
+                {sensors.ec !== null ? `${Math.round(sensors.ec)}` : 'N/A'}
               </Text>
-              <Text style={[styles.cardStatus, { color: '#4f46e5' }]}>Normal</Text>
+              <Text style={[styles.cardStatus, { color: ecStatus.color }]}>{ecStatus.label}</Text>
             </View>
           </View>
 
-          {/* BOTTOM ROW: Temperature & Combined NPK Card */}
           <View style={styles.gridRow}>
-            
-            {/* Temperature Card */}
             <View style={[styles.metricCard, styles.largeRowCard]}>
               <View style={[styles.iconContainer, { backgroundColor: '#ffedd5' }]}>
                 <Text style={styles.cardEmoji}>🌡️</Text>
@@ -205,7 +357,6 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
               <Text style={[styles.cardStatus, { color: '#ef4444' }]}>Normal</Text>
             </View>
 
-            {/* Combined N, P, K Card */}
             <View style={[styles.metricCard, styles.largeRowCard, styles.npkCard]}>
               <View style={styles.npkHeader}>
                 <View style={[styles.iconContainer, { backgroundColor: '#dcfce7', marginBottom: 0 }]}>
@@ -237,10 +388,8 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
                 {npkStatus.label}
               </Text>
             </View>
-
           </View>
 
-          {/* OPTIMIZE BUTTON */}
           <TouchableOpacity 
             style={styles.optimizeButton} 
             onPress={() => setShowOptimizeModal(true)}
@@ -249,10 +398,8 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
             <Text style={styles.optimizeButtonEmoji}>⚡</Text>
             <Text style={styles.optimizeButtonText}>Optimize Soil Health</Text>
           </TouchableOpacity>
-
         </View>
 
-        {/* --- GRAPH 1: Soil pH Levels by Day --- */}
         <View style={styles.chartCard}>
           <Text style={styles.chartTitle}>Soil pH Levels by Day</Text>
           <Text style={styles.chartSubtitle}>Weekly monitoring</Text>
@@ -309,7 +456,6 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
           )}
         </View>
 
-        {/* --- GRAPH 2: pH Trend Over Time --- */}
         <View style={styles.chartCard}>
           <Text style={styles.chartTitle}>pH Trend Over Time</Text>
           <Text style={styles.chartSubtitle}>Last 24 hours</Text>
@@ -345,7 +491,6 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
           )}
         </View>
 
-        {/* SENSOR INFORMATION CARD */}
         <View style={styles.infoCard}>
           <View style={styles.infoCardHeader}>
             <Text style={styles.infoTitle}>Sensor Information</Text>
@@ -357,7 +502,7 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
 
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Sensor ID:</Text>
-            <Text style={styles.infoValue}>{hasSensor ? plotData.sensor_id : 'N/A'}</Text>
+            <Text style={styles.infoValue}>{hasSensor ? activeSensorId : 'N/A'}</Text>
           </View>
 
           <View style={styles.infoRow}>
@@ -368,7 +513,7 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Battery Status:</Text>
             <Text style={[styles.infoValue, styles.batteryText]}>
-              {sensors.battery !== null ? `${sensors.battery}%` : '0%'}
+              {hasSensor && sensors.battery !== null ? `${sensors.battery}%` : 'N/A'}
             </Text>
           </View>
 
@@ -377,17 +522,77 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
               styles.actionButton, 
               { backgroundColor: hasSensor ? '#ef4444' : '#22c55e' }
             ]} 
-            onPress={onDisconnectSensor}
+            onPress={handleConnectOrDisconnect}
           >
             <Text style={styles.actionButtonText}>
-              {hasSensor ? '🔌 Disconnect Sensor' : '🔌 Connect Sensor'}
+              {hasSensor ? '🔌 Disconnect Sensor' : '🔌 Connect Available Sensor'}
             </Text>
           </TouchableOpacity>
         </View>
 
       </ScrollView>
 
-      {/* FERTILIZER RECOMMENDATIONS MODAL POPUP */}
+      {/* SENSOR SELECTION POPUP MENU */}
+      <Modal
+        visible={showSensorModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowSensorModal(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowSensorModal(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.modalCard}>
+            <Text style={styles.modalHeaderTitle}>📡 Select Available Sensor</Text>
+            <Text style={styles.modalHeaderSubtitle}>
+              Link an active Supabase hardware sensor to {currentPlot}
+            </Text>
+
+            {connecting ? (
+              <ActivityIndicator size="large" color="#22c55e" style={{ marginVertical: 30 }} />
+            ) : availableSensors.length === 0 ? (
+              <View style={styles.emptyStateContainer}>
+                <Text style={styles.emptyStateText}>No active sensors found in Supabase.</Text>
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: 260, marginVertical: 10 }}>
+                {availableSensors.map((item, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    style={styles.sensorSelectItem}
+                    onPress={() => handleSelectSensor(item.sensor_id)}
+                  >
+                    <View style={styles.sensorSelectIconBadge}>
+                      <Text style={{ fontSize: 16 }}>📟</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.sensorSelectTitle}>{item.sensor_id}</Text>
+                      <Text style={styles.sensorSelectSub}>
+                        Battery: {item.battery}% • Last seen: {item.timestamp}
+                      </Text>
+                    </View>
+                    <View style={styles.connectBadge}>
+                      <Text style={styles.connectBadgeText}>Connect</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
+            <TouchableOpacity 
+              style={styles.closeModalButton} 
+              onPress={() => setShowSensorModal(false)}
+            >
+              <Text style={styles.closeModalButtonText}>Cancel</Text>
+            </TouchableOpacity>
+
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* SOIL OPTIMIZATION RECOMMENDATIONS MODAL */}
       <Modal
         visible={showOptimizeModal}
         transparent={true}
@@ -401,7 +606,6 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
         >
           <TouchableOpacity activeOpacity={1} style={styles.modalCard}>
             
-            {/* Header Title with Lightbulb Badge */}
             <View style={styles.recHeaderRow}>
               <View style={styles.lightbulbBadge}>
                 <Text style={{ fontSize: 16 }}>💡</Text>
@@ -413,7 +617,6 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
               For lot size: {plotSize} • Based on soil test results
             </Text>
 
-            {/* Recommendation Item 1: Agricultural Lime */}
             <View style={styles.recBoxLime}>
               <View style={styles.recBoxTopRow}>
                 <View style={styles.alertIconBadge}>
@@ -431,7 +634,6 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
               </Text>
             </View>
 
-            {/* Recommendation Item 2: Urea */}
             <View style={styles.recBoxUrea}>
               <View style={styles.recBoxTopRow}>
                 <View style={styles.numberIconBadge}>
@@ -446,7 +648,6 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
               </Text>
             </View>
 
-            {/* Recommendation Item 3: pH Prioritization Tip Box */}
             <View style={styles.recBoxTip}>
               <Text style={styles.tipText}>
                 <Text style={styles.tipTitle}>⚠️ pH Prioritization: </Text>
@@ -454,7 +655,6 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
               </Text>
             </View>
 
-            {/* Close Button */}
             <TouchableOpacity 
               style={styles.closeModalButton} 
               onPress={() => setShowOptimizeModal(false)}
