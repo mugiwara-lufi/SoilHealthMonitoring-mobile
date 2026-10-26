@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
-  TouchableOpacity, 
-  SafeAreaView, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  SafeAreaView,
   StatusBar,
   TextInput,
   Modal,
@@ -13,14 +13,16 @@ import {
   KeyboardAvoidingView,
   Platform
 } from 'react-native';
+// Add the icon library import
+import { Ionicons } from '@expo/vector-icons';
 
-export default function AdminScreen({ 
-  plots = [], 
+export default function AdminScreen({
+  plots = [],
   users = [],
   logs = [],
   currentAdminId,
   currentAdminUsername,
-  onSelectPlot, 
+  onSelectPlot,
   onOpenProfile,
   currentTab,
   onSelectTab,
@@ -39,14 +41,14 @@ export default function AdminScreen({
   const safeLogs = logs || [];
 
   const loggedInAdmin = safeUsers.find(
-    (u) => 
-      (currentAdminId && u.id === currentAdminId) || 
+    (u) =>
+      (currentAdminId && u.id === currentAdminId) ||
       (currentAdminUsername && u.username === currentAdminUsername)
   );
 
-  const displayAdminName = 
-    currentAdminUsername || 
-    loggedInAdmin?.username || 
+  const displayAdminName =
+    currentAdminUsername ||
+    loggedInAdmin?.username ||
     'Admin';
 
   // Modal State for Add/Edit User
@@ -62,16 +64,33 @@ export default function AdminScreen({
     assignedPlotIds: []
   });
 
-  // Filter Users: ONLY show users created by THIS specific admin (plus the admin's own profile)
+  // Filter Users: ONLY show users created by/linked to THIS specific admin (plus the admin's own profile)
   const adminVisibleUsers = safeUsers.filter((u) => {
-    const isSelf = (currentAdminId && u.id === currentAdminId) || 
+    const isSelf = (currentAdminId && u.id === currentAdminId) ||
                    (currentAdminUsername && u.username === currentAdminUsername);
-    const isCreatedByThisAdmin = u.createdByAdminId === currentAdminId || 
-                                 u.createdByAdminUsername === currentAdminUsername;
+    const isCreatedByThisAdmin = u.createdByAdminId === currentAdminId ||
+                                 u.createdByAdminUsername === currentAdminUsername ||
+                                 u.owner_id === currentAdminId ||
+                                 (u.owner_username && u.owner_username === currentAdminUsername);
     return isSelf || isCreatedByThisAdmin;
   });
 
-  // Safe search filter on the visible users list (removed farmName check)
+  // Filter Plots: ONLY show plots owned by THIS admin OR owned by users who inherited this admin's email/account
+  const adminVisiblePlots = safePlots.filter((p) => {
+    const isOwnerPlot = p.farmer === currentAdminId || 
+                        p.farmer_username === currentAdminUsername || 
+                        p.owner_id === currentAdminId ||
+                        (p.owner_username && p.owner_username === currentAdminUsername);
+    
+    // Also check if plot belongs to any sub-farmer/user visible to this admin
+    const belongsToVisibleUser = adminVisibleUsers.some(
+      (u) => u.id === p.farmer || u.username === p.farmer_username
+    );
+
+    return isOwnerPlot || belongsToVisibleUser;
+  });
+
+  // Safe search filter on the visible users list
   const filteredUsers = adminVisibleUsers.filter(u => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return true;
@@ -83,12 +102,12 @@ export default function AdminScreen({
     return username.includes(query) || name.includes(query) || email.includes(query);
   });
 
-  // Dynamic calculations based on live backend plots
-  const totalPlots = safePlots.length;
-  const sensorsAssigned = safePlots.filter(p => p.sensor_id && p.sensor_id !== 'N/A');
-  const onlineSensors = safePlots.filter(p => p.status === 'Online');
-  
-  const phAlertsCount = safePlots.filter(p => {
+  // Dynamic calculations based on filtered visible plots
+  const totalPlots = adminVisiblePlots.length;
+  const sensorsAssigned = adminVisiblePlots.filter(p => p.sensor_id && p.sensor_id !== 'N/A');
+  const onlineSensors = adminVisiblePlots.filter(p => p.status === 'Online');
+ 
+  const phAlertsCount = adminVisiblePlots.filter(p => {
     const latestPh = p.records && p.records.length > 0 ? p.records[0].ph_level : p.sensors?.ph;
     const phVal = parseFloat(latestPh);
     return !isNaN(phVal) && phVal < 5.5;
@@ -112,15 +131,15 @@ export default function AdminScreen({
   const handleOpenEditModal = (user) => {
     setEditingUser(user);
     const fullName = user.name || `${user.first_name || ''} ${user.last_name || ''}`.trim();
-    
-    // Find plot IDs currently assigned to this user
-    const existingAssignedPlots = safePlots
+   
+    // Find plot IDs currently assigned to this user from visible plots
+    const existingAssignedPlots = adminVisiblePlots
       .filter(p => p.farmer === user.id || p.farmer_username === user.username)
       .map(p => p.id);
 
     setFormData({
       username: user.username || '',
-      password: '', // Hidden/empty on edit unless updating
+      password: '',
       name: fullName || user.username || '',
       email: user.email || '',
       phone: user.phone || '',
@@ -135,7 +154,7 @@ export default function AdminScreen({
       const exists = prev.assignedPlotIds.includes(plotId);
       return {
         ...prev,
-        assignedPlotIds: exists 
+        assignedPlotIds: exists
           ? prev.assignedPlotIds.filter(id => id !== plotId)
           : [...prev.assignedPlotIds, plotId]
       };
@@ -154,7 +173,7 @@ export default function AdminScreen({
     }
 
     if (editingUser) {
-      const selectedPlots = safePlots.filter(p => formData.assignedPlotIds.includes(p.id));
+      const selectedPlots = adminVisiblePlots.filter(p => formData.assignedPlotIds.includes(p.id));
       onUpdateUser?.(editingUser.id, {
         ...formData,
         assignedPlots: selectedPlots
@@ -166,7 +185,8 @@ export default function AdminScreen({
         is_staff: formData.role === 'ADMIN',
         createdByAdminId: currentAdminId,
         createdByAdminUsername: currentAdminUsername,
-        assignedPlots: [] // Plots assigned only during edit phase
+        owner_email: loggedInAdmin?.email || '',
+        assignedPlots: []
       };
 
       onAddUser?.(newUser);
@@ -181,9 +201,9 @@ export default function AdminScreen({
       'Are you sure you want to delete this user?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          style: 'destructive', 
+        {
+          text: 'Delete',
+          style: 'destructive',
           onPress: () => onDeleteUser?.(userId)
         }
       ]
@@ -193,14 +213,14 @@ export default function AdminScreen({
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#122c22" />
-      
+     
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.headerContainer}>
           <View style={styles.topRow}>
             <View style={styles.brandGroup}>
               <View style={styles.shieldBadge}>
-                <Text style={styles.shieldIcon}>🛡️</Text>
+                <Ionicons name="shield-checkmark" size={24} color="#10b981" />
               </View>
               <View>
                 <Text style={styles.headerTitle}>Admin Panel</Text>
@@ -211,22 +231,22 @@ export default function AdminScreen({
             </View>
 
             <View style={styles.actionRow}>
-              <TouchableOpacity 
-                style={styles.appSwitchBtn} 
+              <TouchableOpacity
+                style={styles.appSwitchBtn}
                 onPress={() => onSelectTab?.('Explore')}
                 accessibilityRole="button"
                 accessibilityLabel="Switch to Farmer App"
               >
                 <Text style={styles.appSwitchText}>Farmer App</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.logoutBtn} 
+             
+              <TouchableOpacity
+                style={styles.logoutBtn}
                 onPress={onLogout}
                 accessibilityRole="button"
                 accessibilityLabel="Log out"
               >
-                <Text style={styles.logoutIcon}>🚪</Text>
+                <Ionicons name="log-out-outline" size={24} color="#ef4444" />
               </TouchableOpacity>
             </View>
           </View>
@@ -236,8 +256,8 @@ export default function AdminScreen({
             {['Overview', 'Users', 'Devices', 'Logs'].map((tab) => {
               const isActive = activeSubTab === tab;
               return (
-                <TouchableOpacity 
-                  key={tab} 
+                <TouchableOpacity
+                  key={tab}
                   style={[styles.subTabItem, isActive && styles.subTabActive]}
                   onPress={() => setActiveSubTab(tab)}
                   accessibilityRole="tab"
@@ -284,10 +304,10 @@ export default function AdminScreen({
             {/* Network Status */}
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>LoRa Network Status</Text>
-              {safePlots.length === 0 ? (
+              {adminVisiblePlots.length === 0 ? (
                 <Text style={styles.emptyText}>No devices connected.</Text>
               ) : (
-                safePlots.map((plot, index) => (
+                adminVisiblePlots.map((plot, index) => (
                   <View key={plot.id || index} style={styles.networkRow}>
                     <View style={styles.networkInfo}>
                       <View style={[styles.statusDot, { backgroundColor: plot.status === 'Online' ? '#10b981' : '#64748b' }]} />
@@ -311,23 +331,23 @@ export default function AdminScreen({
             {/* Plot Overview */}
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>Plot Overview</Text>
-              {safePlots.length === 0 ? (
+              {adminVisiblePlots.length === 0 ? (
                 <Text style={styles.emptyText}>No farm plots available.</Text>
               ) : (
-                safePlots.map((plot) => {
-                  const latestPh = plot.records && plot.records.length > 0 
-                    ? plot.records[0].ph_level 
+                adminVisiblePlots.map((plot) => {
+                  const latestPh = plot.records && plot.records.length > 0
+                    ? plot.records[0].ph_level
                     : (plot.sensors?.ph ?? 'N/A');
                   const isAcidic = !isNaN(parseFloat(latestPh)) && parseFloat(latestPh) < 5.5;
 
                   return (
-                    <TouchableOpacity 
-                      key={plot.id} 
+                    <TouchableOpacity
+                      key={plot.id}
                       style={styles.plotRow}
                       onPress={() => onSelectPlot?.(plot)}
                     >
                       <View style={styles.plotLeft}>
-                        <Text style={styles.cropIcon}>{plot.icon || '🌱'}</Text>
+                        <Ionicons name="leaf-outline" size={20} color="#15803d" style={styles.cropIcon} />
                         <View>
                           <Text style={styles.plotTitle}>{plot.name}</Text>
                           <Text style={styles.plotSubtitle}>{plot.crop_type || plot.crop || 'Crop N/A'}</Text>
@@ -336,14 +356,14 @@ export default function AdminScreen({
 
                       <View style={styles.plotRight}>
                         <Text style={[
-                          styles.phText, 
+                          styles.phText,
                           { color: isAcidic ? '#ef4444' : '#15803d' }
                         ]}>
                           pH {latestPh}
                         </Text>
                         <Text style={styles.deviceStatusText}>
-                          {plot.sensor_id && plot.sensor_id !== 'N/A' 
-                            ? (plot.status === 'Online' ? 'online' : 'offline') 
+                          {plot.sensor_id && plot.sensor_id !== 'N/A'
+                            ? (plot.status === 'Online' ? 'online' : 'offline')
                             : 'no device'}
                         </Text>
                       </View>
@@ -366,7 +386,7 @@ export default function AdminScreen({
             </View>
 
             <View style={styles.searchContainer}>
-              <Text style={styles.searchIcon}>🔍</Text>
+              <Ionicons name="search" size={20} color="#94a3b8" style={styles.searchIcon} />
               <TextInput
                 style={styles.searchInput}
                 placeholder="Search users..."
@@ -380,25 +400,29 @@ export default function AdminScreen({
               <Text style={styles.emptyText}>No users created by you found.</Text>
             ) : (
               filteredUsers.map((user, idx) => {
-                const displayName = user.name || 
+                const displayName = user.name ||
                   (user.first_name || user.last_name ? `${user.first_name || ''} ${user.last_name || ''}`.trim() : user.username);
-                
+               
                 const role = user.role || (user.is_staff || user.is_superuser ? 'ADMIN' : 'FARMER');
-                
-                const isCurrentAdmin = 
-                  (currentAdminId && user.id === currentAdminId) || 
+               
+                const isCurrentAdmin =
+                  (currentAdminId && user.id === currentAdminId) ||
                   (currentAdminUsername && user.username === currentAdminUsername);
-                
+               
                 const isActive = user.is_active !== undefined ? user.is_active : user.status !== 'Inactive';
 
-                // Find assigned plots for this user
-                const userPlots = safePlots.filter(p => p.farmer === user.id || p.farmer_username === user.username);
+                // Find assigned plots for this user from visible plots
+                const userPlots = adminVisiblePlots.filter(p => p.farmer === user.id || p.farmer_username === user.username);
 
                 return (
                   <View key={user.id || user.username || idx} style={styles.userCard}>
                     <View style={styles.userCardHeader}>
                       <View style={styles.userAvatarCircle}>
-                        <Text style={{ fontSize: 18 }}>{role === 'ADMIN' ? '🛡️' : '🧑‍🌾'}</Text>
+                        <Ionicons
+                          name={role === 'ADMIN' ? 'shield-checkmark' : 'person'}
+                          size={18}
+                          color={role === 'ADMIN' ? '#4338ca' : '#15803d'}
+                        />
                       </View>
                       <View style={{ flex: 1 }}>
                         <View style={styles.userNameRow}>
@@ -419,10 +443,18 @@ export default function AdminScreen({
                             </Text>
                           </View>
                         </View>
-                        {user.username && <Text style={styles.userDetailText}>👤 @{user.username}</Text>}
+                        {user.username && (
+                          <Text style={styles.userDetailText}>
+                            <Ionicons name="person-outline" size={12} /> @{user.username}
+                          </Text>
+                        )}
                         {user.email ? <Text style={styles.userEmail}>{user.email}</Text> : null}
-                        {user.phone ? <Text style={styles.userDetailText}>📞 {user.phone}</Text> : null}
-                        
+                        {user.phone ? (
+                          <Text style={styles.userDetailText}>
+                            <Ionicons name="call-outline" size={12} /> {user.phone}
+                          </Text>
+                        ) : null}
+                       
                         {/* Assigned Plots Preview */}
                         <View style={styles.assignedPlotsContainer}>
                           <Text style={styles.assignedPlotsLabel}>Assigned Plots ({userPlots.length}):</Text>
@@ -442,36 +474,36 @@ export default function AdminScreen({
 
                       {!isCurrentAdmin && (
                         <TouchableOpacity onPress={() => handleOpenEditModal(user)} style={styles.editBtn}>
-                          <Text style={{ fontSize: 14 }}>✏</Text>
+                          <Ionicons name="pencil" size={18} color="#64748b" />
                         </TouchableOpacity>
                       )}
                     </View>
 
                     {!isCurrentAdmin && (
                       <View style={styles.userCardActions}>
-                        <TouchableOpacity 
-                          style={styles.deactivateBtn} 
+                        <TouchableOpacity
+                          style={styles.deactivateBtn}
                           onPress={() => onUpdateUser?.(user.id, { is_active: !isActive })}
                         >
                           <Text style={styles.deactivateText}>
-                            👤 {isActive ? 'Deactivate' : 'Activate'}
+                            <Ionicons name="person-outline" size={14} /> {isActive ? 'Deactivate' : 'Activate'}
                           </Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity 
-                          style={styles.roleToggleBtn} 
+                        <TouchableOpacity
+                          style={styles.roleToggleBtn}
                           onPress={() => onUpdateUser?.(user.id, { is_staff: role !== 'ADMIN' })}
                         >
                           <Text style={styles.roleToggleText}>
-                            🛡️ Switch to {role === 'ADMIN' ? 'Farmer' : 'Admin'}
+                            <Ionicons name="shield-checkmark" size={14} /> Switch to {role === 'ADMIN' ? 'Farmer' : 'Admin'}
                           </Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity 
-                          style={styles.deleteUserBtn} 
+                        <TouchableOpacity
+                          style={styles.deleteUserBtn}
                           onPress={() => handleDeleteUser(user.id)}
                         >
-                          <Text style={{ fontSize: 14 }}>🗑️</Text>
+                          <Ionicons name="trash-outline" size={18} color="#ef4444" />
                         </TouchableOpacity>
                       </View>
                     )}
@@ -493,7 +525,7 @@ export default function AdminScreen({
                 <View key={plot.sensor_id || idx} style={styles.deviceCard}>
                   <View style={styles.deviceCardHeader}>
                     <View style={styles.deviceIconCircle}>
-                      <Text style={{ fontSize: 16 }}>📟</Text>
+                      <Ionicons name="hardware-chip-outline" size={20} color="#0f172a" />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.deviceName}>
@@ -512,7 +544,7 @@ export default function AdminScreen({
                     <Text style={styles.deviceMetaText}>Type: LoRa Soil Node</Text>
                   </View>
 
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={styles.restartDeviceBtn}
                     onPress={() => {
                       Alert.alert('Restart Node', `Send restart command to node ${plot.sensor_id}?`, [
@@ -521,7 +553,9 @@ export default function AdminScreen({
                       ]);
                     }}
                   >
-                    <Text style={styles.restartDeviceText}>🔄 Restart Sensor Node</Text>
+                    <Text style={styles.restartDeviceText}>
+                      <Ionicons name="refresh-outline" size={14} /> Restart Sensor Node
+                    </Text>
                   </TouchableOpacity>
                 </View>
               ))
@@ -532,7 +566,7 @@ export default function AdminScreen({
 
       {/* Add / Edit User Modal */}
       <Modal visible={isModalOpen} transparent animationType="slide" onRequestClose={() => setIsModalOpen(false)}>
-        <KeyboardAvoidingView 
+        <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.modalOverlay}
         >
@@ -589,11 +623,11 @@ export default function AdminScreen({
               {editingUser && (
                 <>
                   <Text style={styles.modalSectionLabel}>Assign Existing Plots:</Text>
-                  {safePlots.length === 0 ? (
+                  {adminVisiblePlots.length === 0 ? (
                     <Text style={styles.emptyText}>No existing plots available to assign.</Text>
                   ) : (
                     <View style={styles.plotChecklist}>
-                      {safePlots.map((plot) => {
+                      {adminVisiblePlots.map((plot) => {
                         const isSelected = formData.assignedPlotIds.includes(plot.id);
                         return (
                           <TouchableOpacity
@@ -601,7 +635,12 @@ export default function AdminScreen({
                             style={[styles.plotCheckItem, isSelected && styles.plotCheckItemSelected]}
                             onPress={() => togglePlotAssignment(plot.id)}
                           >
-                            <Text style={styles.plotCheckIcon}>{isSelected ? '☑' : '⏹️'}</Text>
+                            <Ionicons
+                              name={isSelected ? 'checkbox-outline' : 'square-outline'}
+                              size={20}
+                              color={isSelected ? '#10b981' : '#94a3b8'}
+                              style={styles.plotCheckIcon}
+                            />
                             <View style={{ flex: 1 }}>
                               <Text style={styles.plotCheckTitle}>{plot.name}</Text>
                               <Text style={styles.plotCheckSub}>{plot.crop_type || plot.crop || 'Crop N/A'}</Text>

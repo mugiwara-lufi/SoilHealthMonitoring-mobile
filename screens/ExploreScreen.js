@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView, TextInput, Alert } from 'react-native';
+import { Ionicons } from '@expo/vector-icons'; // <-- Added import
 import MobileFooter from '../components/MobileFooter';
 
 export default function ExploreScreen({ 
@@ -44,7 +45,6 @@ export default function ExploreScreen({
     );
   });
 
-
 const submitNewPlot = async () => {
   const plotName = newPlotName.trim();
   const cropType = newCropType.trim();
@@ -63,7 +63,7 @@ const submitNewPlot = async () => {
     crop: cropType,
     location: location,
     sensor_id: null,
-    icon: '🚜',
+    icon: 'leaf', // Replaced 🚜 string with icon name for backend
     color: '#64748b',
     records: [],
     sensors: {
@@ -94,7 +94,6 @@ const submitNewPlot = async () => {
   }
 };
 
-
   const confirmDelete = (id, name) => {
     Alert.alert(
       "Remove Plot",
@@ -112,12 +111,14 @@ const submitNewPlot = async () => {
       <View style={styles.cardWrapper}>
         <TouchableOpacity style={styles.plotCard} onPress={() => onSelectPlot(item)}>
           <View style={[styles.iconContainer, { backgroundColor: status.color + '20' }]}>
-            <Text style={{ fontSize: 24 }}>{item.icon}</Text>
+            <Ionicons name="leaf" size={24} color={status.color} />
           </View>
           <View style={styles.textContainer}>
             <Text style={styles.plotName}>{item.name}</Text>
             <Text style={styles.cropType}>{item.crop}</Text>
-            <Text style={styles.cropType}>📍 {item.location || 'No location'}</Text>
+            <Text style={styles.cropType}>
+              <Ionicons name="location-outline" size={12} /> {item.location || 'No location'}
+            </Text>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: status.color + '15', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }]}>
             <View style={[styles.statusDot, { backgroundColor: status.color }]} />
@@ -125,7 +126,7 @@ const submitNewPlot = async () => {
           </View>
         </TouchableOpacity>
         <TouchableOpacity style={styles.deleteBtn} onPress={() => confirmDelete(item.id, item.name)}>
-          <Text style={{ fontSize: 18 }}>🗑️</Text>
+          <Ionicons name="trash-outline" size={20} color="#ef4444" />
         </TouchableOpacity>
       </View>
     );
@@ -140,7 +141,7 @@ const submitNewPlot = async () => {
             <Text style={styles.headerSubtitle}>Manage your farm plots</Text>
           </View>
           <TouchableOpacity style={styles.profileBtn} onPress={onOpenProfile}>
-            <Text style={{ fontSize: 20 }}>👤</Text>
+            <Ionicons name="person-circle-outline" size={28} color="#0f172a" />
           </TouchableOpacity>
         </View>
 
@@ -154,13 +155,19 @@ const submitNewPlot = async () => {
           />
           {searchText !== '' && (
             <TouchableOpacity onPress={() => setSearchText('')} style={styles.clearBtn}>
-              <Text style={{ color: '#64748b' }}>✕</Text>
+              <Ionicons name="close-circle" size={18} color="#64748b" />
             </TouchableOpacity>
           )}
         </View>
 
         <TouchableOpacity style={styles.addButton} onPress={() => setShowAddForm(!showAddForm)}>
-          <Text style={styles.addButtonText}>{showAddForm ? "✕ Cancel" : "+ Add New Plot"}</Text>
+          <Text style={styles.addButtonText}>
+            {showAddForm ? (
+              <><Ionicons name="close" size={14} color="#fff" /> Cancel</>
+            ) : (
+              <><Ionicons name="add" size={14} color="#fff" /> Add New Plot</>
+            )}
+          </Text>
         </TouchableOpacity>
 
         {showAddForm && (

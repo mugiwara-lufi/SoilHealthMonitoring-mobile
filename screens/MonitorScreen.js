@@ -1,27 +1,33 @@
 // MonitorScreen.js
 
 import React, { useEffect, useState } from 'react';
-import { 
-  ScrollView, 
-  View, 
-  Text, 
-  StyleSheet, 
-  SafeAreaView, 
-  TouchableOpacity, 
-  Dimensions, 
+import {
+  ScrollView,
+  View,
+  Text,
+  StyleSheet,
+  SafeAreaView,
+  TouchableOpacity,
+  Dimensions,
   ActivityIndicator,
   Modal,
-  Alert 
+  Alert,
+  TextInput
 } from 'react-native';
 import { BarChart, LineChart } from 'react-native-chart-kit';
+import { Ionicons } from '@expo/vector-icons';
+import { BleManager } from 'react-native-ble-plx';
+import { Buffer } from 'buffer';
 import MobileFooter from '../components/MobileFooter';
 
 const screenWidth = Dimensions.get('window').width - 30;
-const API_BASE_URL = 'http://192.168.11.28:8000'; // Replace with your environment/config variable
+const API_BASE_URL = 'http://192.168.11.28:8000';
 
 // Supabase Direct Credentials
 const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_cyQgbi_v02dkhswabEBWoQ_3exGPlaK';
+
+const bleManager = new BleManager();
 
 export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSensor, currentTab, onSelectTab, onBack, onUpdatePlotSensor }) {
   const currentPlot = plotData?.name || "Plot";
@@ -33,10 +39,17 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
   const [loadingCharts, setLoadingCharts] = useState(false);
   const [showOptimizeModal, setShowOptimizeModal] = useState(false);
   const [showSensorModal, setShowSensorModal] = useState(false);
+  
+  // BLE Wi-Fi Provisioning States
+  const [showWifiModal, setShowWifiModal] = useState(false);
+  const [scannedDevices, setScannedDevices] = useState([]);
+  const [wifiSsid, setWifiSsid] = useState('');
+  const [wifiPass, setWifiPass] = useState('');
+  const [isProvisioning, setIsProvisioning] = useState(false);
+
   const [connecting, setConnecting] = useState(false);
   const [availableSensors, setAvailableSensors] = useState([]);
-  
-  // Local states for immediate UI updates
+ 
   const [activeSensorId, setActiveSensorId] = useState(null);
   const [supabaseLatestRecord, setSupabaseLatestRecord] = useState(null);
 
@@ -49,14 +62,12 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
     values: [5.2, 5.4, 5.6, 5.8, 5.9, 5.7, 5.6]
   });
 
-  // Sync local active sensor with parent plotData initially
   useEffect(() => {
     if (plotData?.sensor_id && plotData.sensor_id !== 'N/A') {
       setActiveSensorId(plotData.sensor_id);
     }
   }, [plotData?.sensor_id]);
 
-  // Fetch live sensor record from Supabase 
   const fetchSupabaseLiveRecord = async (targetSensorId) => {
     const sId = targetSensorId || activeSensorId;
     if (!sId || sId === 'N/A') {
@@ -118,16 +129,15 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
     if (onRefreshData) onRefreshData();
   };
 
-  const latestRecord = supabaseLatestRecord 
+  const latestRecord = supabaseLatestRecord
     || (Array.isArray(plotData?.records) && plotData.records.length > 0 ? plotData.records[0] : (plotData?.sensors || null));
 
   const hasSensor = Boolean(activeSensorId && activeSensorId !== "N/A");
 
-  // PATCH request to update `plot_id` in Supabase when connecting/disconnecting
   const updateSupabasePlotId = async (sensorId, plotId) => {
     try {
       await fetch(
-        `${SUPABASE_URL}/rest/v1/soil_records?sensor_id=eq.${encodeURIComponent(sensorId)}`, 
+        `${SUPABASE_URL}/rest/v1/soil_records?sensor_id=eq.${encodeURIComponent(sensorId)}`,
         {
           method: 'PATCH',
           headers: {
@@ -136,7 +146,7 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
             'Content-Type': 'application/json',
             'Prefer': 'return=minimal'
           },
-          body: JSON.stringify({ plot_id: plotId }) // Links or unlinks plot_id
+          body: JSON.stringify({ plot_id: plotId })
         }
       );
     } catch (err) {
@@ -144,7 +154,6 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
     }
   };
 
-  // Fetch all available active sensors from Supabase
   const handleConnectOrDisconnect = async () => {
     if (hasSensor) {
       Alert.alert(
@@ -152,22 +161,17 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
         `Are you sure you want to disconnect sensor "${activeSensorId}" from ${currentPlot}?`,
         [
           { text: "Cancel", style: "cancel" },
-          { 
-            text: "Disconnect", 
-            style: "destructive", 
+          {
+            text: "Disconnect",
+            style: "destructive",
             onPress: async () => {
               const prevSensorId = activeSensorId;
-              
-              // Optimistic UI updates
               setActiveSensorId(null);
               setSupabaseLatestRecord(null);
-
-              // Unlink from Supabase
               await updateSupabasePlotId(prevSensorId, null);
-
               if (onDisconnectSensor) onDisconnectSensor();
               if (onRefreshData) onRefreshData();
-            } 
+            }
           }
         ]
       );
@@ -179,7 +183,7 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
 
     try {
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=100`, 
+        `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=100`,
         {
           method: 'GET',
           headers: {
@@ -215,33 +219,77 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
     }
   };
 
-  // Assign chosen sensor and update UI & DB
   const handleSelectSensor = async (sensorId) => {
     setShowSensorModal(false);
-    
-    // 1. Instantly update UI states
     setActiveSensorId(sensorId);
-    
-    // 2. Link plot_id in Supabase
     await updateSupabasePlotId(sensorId, plotData.id);
-
-    // 3. Inform parent (Django backend)
-    if (onUpdatePlotSensor) {
-      onUpdatePlotSensor(plotData.id, sensorId);
-    }
-
-    // 4. Fetch the data right away
+    if (onUpdatePlotSensor) onUpdatePlotSensor(plotData.id, sensorId);
     await fetchSupabaseLiveRecord(sensorId);
-    
     if (onRefreshData) onRefreshData();
     Alert.alert("Sensor Linked", `Successfully linked ${sensorId} to ${currentPlot}`);
+  };
+
+  // --- BLE Wi-Fi Provisioning Handlers ---
+  const startBleScan = () => {
+    setScannedDevices([]);
+    setShowWifiModal(true);
+    bleManager.startDeviceScan(null, null, (error, device) => {
+      if (error) {
+        console.log(error);
+        return;
+      }
+      if (device && device.name && device.name.includes("JJMAP")) {
+        setScannedDevices(prev => {
+          if (!prev.some(d => d.id === device.id)) {
+            return [...prev, device];
+          }
+          return prev;
+        });
+      }
+    });
+  };
+
+  const configureDeviceWifi = async (device) => {
+    if (!wifiSsid.trim() || !wifiPass.trim()) {
+      Alert.alert("Error", "Please enter both Wi-Fi SSID and Password.");
+      return;
+    }
+
+    try {
+      setIsProvisioning(true);
+      bleManager.stopDeviceScan();
+      const connectedDevice = await device.connect();
+      await connectedDevice.discoverAllServicesAndCharacteristics();
+
+      const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+      const SSID_CHAR_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+      const PASS_CHAR_UUID = "1b5483e-36e1-4688-b7f5-ea07361b26a9";
+
+      const base64Ssid = Buffer.from(wifiSsid).toString('base64');
+      const base64Pass = Buffer.from(wifiPass).toString('base64');
+
+      await connectedDevice.writeCharacteristicWithResponseForService(
+        SERVICE_UUID, SSID_CHAR_UUID, base64Ssid
+      );
+      await connectedDevice.writeCharacteristicWithResponseForService(
+        SERVICE_UUID, PASS_CHAR_UUID, base64Pass
+      );
+
+      Alert.alert("Success", "Wi-Fi configuration sent to device successfully! Device will now reboot.");
+      setShowWifiModal(false);
+      setWifiSsid('');
+      setWifiPass('');
+    } catch (err) {
+      Alert.alert("Provisioning Error", err.message);
+    } finally {
+      setIsProvisioning(false);
+    }
   };
 
   const getSensorVal = (rec, ...keys) => {
     if (!rec) return null;
     for (const key of keys) {
       const val = key.split('.').reduce((obj, k) => obj?.[k], rec);
-      // Strictly avoid strings that literally say "N/A"
       if (val !== undefined && val !== null && val !== '' && val !== 'N/A') {
         const parsed = parseFloat(String(val).replace(/[^0-9.-]/g, ''));
         if (!isNaN(parsed)) {
@@ -298,10 +346,10 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        
+       
         <View style={styles.headerCard}>
           <TouchableOpacity style={styles.backButton} onPress={onBack}>
-            <Text style={styles.backIcon}>←</Text>
+            <Ionicons name="arrow-back" size={24} color="#0f172a" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>{currentPlot} Soil Analytics</Text>
           <Text style={styles.headerSubtitle}>{currentCrop} Real-time Monitoring</Text>
@@ -311,7 +359,7 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
           <View style={styles.gridRow}>
             <View style={styles.metricCard}>
               <View style={[styles.iconContainer, { backgroundColor: '#fee2e2' }]}>
-                <Text style={styles.cardEmoji}>🧪</Text>
+                <Ionicons name="flask" size={22} color="#ef4444" />
               </View>
               <Text style={styles.cardLabel}>Soil pH</Text>
               <Text style={styles.cardValue}>
@@ -324,7 +372,7 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
 
             <View style={styles.metricCard}>
               <View style={[styles.iconContainer, { backgroundColor: '#dbeafe' }]}>
-                <Text style={styles.cardEmoji}>💧</Text>
+                <Ionicons name="water" size={24} color="#3b82f6" />
               </View>
               <Text style={styles.cardLabel}>Moisture</Text>
               <Text style={styles.cardValue}>
@@ -335,7 +383,7 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
 
             <View style={styles.metricCard}>
               <View style={[styles.iconContainer, { backgroundColor: '#e0e7ff' }]}>
-                <Text style={styles.cardEmoji}>⚡</Text>
+                <Ionicons name="flash" size={22} color="#fff764" />
               </View>
               <Text style={styles.cardLabel}>EC</Text>
               <Text style={styles.cardValue}>
@@ -348,7 +396,7 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
           <View style={styles.gridRow}>
             <View style={[styles.metricCard, styles.largeRowCard]}>
               <View style={[styles.iconContainer, { backgroundColor: '#ffedd5' }]}>
-                <Text style={styles.cardEmoji}>🌡️</Text>
+                <Ionicons name="thermometer" size={24} color="#f97316" />
               </View>
               <Text style={styles.cardLabel}>Temperature</Text>
               <Text style={styles.cardValueBig}>
@@ -360,7 +408,7 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
             <View style={[styles.metricCard, styles.largeRowCard, styles.npkCard]}>
               <View style={styles.npkHeader}>
                 <View style={[styles.iconContainer, { backgroundColor: '#dcfce7', marginBottom: 0 }]}>
-                  <Text style={styles.cardEmoji}>🌱</Text>
+                  <Ionicons name="leaf" size={20} color="#22c55e" />
                 </View>
                 <Text style={styles.cardLabelNPK}>NPK Levels</Text>
               </View>
@@ -390,12 +438,12 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
             </View>
           </View>
 
-          <TouchableOpacity 
-            style={styles.optimizeButton} 
+          <TouchableOpacity
+            style={styles.optimizeButton}
             onPress={() => setShowOptimizeModal(true)}
             activeOpacity={0.8}
           >
-            <Text style={styles.optimizeButtonEmoji}>⚡</Text>
+            <Ionicons name="flash" size={18} color="#ffffff" style={{ marginRight: 6 }} />
             <Text style={styles.optimizeButtonText}>Optimize Soil Health</Text>
           </TouchableOpacity>
         </View>
@@ -495,7 +543,7 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
           <View style={styles.infoCardHeader}>
             <Text style={styles.infoTitle}>Sensor Information</Text>
             <TouchableOpacity style={styles.refreshButton} onPress={handleManualRefresh}>
-              <Text style={styles.refreshIcon}>🔄</Text>
+              <Ionicons name="refresh" size={14} color="#22c55e" style={{ marginRight: 4 }} />
               <Text style={styles.refreshText}>Refresh</Text>
             </TouchableOpacity>
           </View>
@@ -517,16 +565,26 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
             </Text>
           </View>
 
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[
-              styles.actionButton, 
+              styles.actionButton,
               { backgroundColor: hasSensor ? '#ef4444' : '#22c55e' }
-            ]} 
+            ]}
             onPress={handleConnectOrDisconnect}
           >
+            <Ionicons name="power" size={18} color="#ffffff" style={{ marginRight: 8 }} />
             <Text style={styles.actionButtonText}>
-              {hasSensor ? '🔌 Disconnect Sensor' : '🔌 Connect Available Sensor'}
+              {hasSensor ? 'Disconnect Sensor' : 'Connect Available Sensor'}
             </Text>
+          </TouchableOpacity>
+
+          {/* Dedicated BLE Wi-Fi Configuration Button */}
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: '#3b82f6', marginTop: 10 }]}
+            onPress={startBleScan}
+          >
+            <Ionicons name="bluetooth" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+            <Text style={styles.actionButtonText}>Configure Device WiFi (BLE)</Text>
           </TouchableOpacity>
         </View>
 
@@ -539,13 +597,15 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
         animationType="slide"
         onRequestClose={() => setShowSensorModal(false)}
       >
-        <TouchableOpacity 
-          style={styles.modalOverlay} 
-          activeOpacity={1} 
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
           onPress={() => setShowSensorModal(false)}
         >
           <TouchableOpacity activeOpacity={1} style={styles.modalCard}>
-            <Text style={styles.modalHeaderTitle}>📡 Select Available Sensor</Text>
+            <Text style={styles.modalHeaderTitle}>
+              <Ionicons name="radio" size={20} color="#0f172a" /> Select Available Sensor
+            </Text>
             <Text style={styles.modalHeaderSubtitle}>
               Link an active Supabase hardware sensor to {currentPlot}
             </Text>
@@ -565,7 +625,7 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
                     onPress={() => handleSelectSensor(item.sensor_id)}
                   >
                     <View style={styles.sensorSelectIconBadge}>
-                      <Text style={{ fontSize: 16 }}>📟</Text>
+                      <Ionicons name="hardware-chip-outline" size={20} color="#64748b" />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.sensorSelectTitle}>{item.sensor_id}</Text>
@@ -581,11 +641,87 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
               </ScrollView>
             )}
 
-            <TouchableOpacity 
-              style={styles.closeModalButton} 
+            <TouchableOpacity
+              style={styles.closeModalButton}
               onPress={() => setShowSensorModal(false)}
             >
               <Text style={styles.closeModalButtonText}>Cancel</Text>
+            </TouchableOpacity>
+
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* BLE WIFI PROVISIONING MODAL */}
+      <Modal
+        visible={showWifiModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowWifiModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowWifiModal(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.modalCard}>
+            <Text style={styles.modalHeaderTitle}>
+              <Ionicons name="bluetooth" size={20} color="#3b82f6" /> ESP32 Wi-Fi Provisioning
+            </Text>
+            <Text style={styles.modalHeaderSubtitle}>
+              Scan and configure local network credentials via Bluetooth
+            </Text>
+
+            <TextInput
+              style={styles.inputField}
+              placeholder="Wi-Fi SSID"
+              placeholderTextColor="#94a3b8"
+              value={wifiSsid}
+              onChangeText={setWifiSsid}
+            />
+            <TextInput
+              style={styles.inputField}
+              placeholder="Wi-Fi Password"
+              placeholderTextColor="#94a3b8"
+              secureTextEntry
+              value={wifiPass}
+              onChangeText={setWifiPass}
+            />
+
+            <Text style={styles.sectionHeaderLabel}>Available Devices (JJMAP_Setup):</Text>
+            
+            {isProvisioning ? (
+              <ActivityIndicator size="large" color="#3b82f6" style={{ marginVertical: 20 }} />
+            ) : scannedDevices.length === 0 ? (
+              <Text style={styles.emptyStateText}>Searching for nearby ESP32 devices...</Text>
+            ) : (
+              <ScrollView style={{ maxHeight: 180, marginVertical: 10 }}>
+                {scannedDevices.map((device, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    style={styles.sensorSelectItem}
+                    onPress={() => configureDeviceWifi(device)}
+                  >
+                    <View style={styles.sensorSelectIconBadge}>
+                      <Ionicons name="bluetooth-outline" size={20} color="#3b82f6" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.sensorSelectTitle}>{device.name || 'Unknown Device'}</Text>
+                      <Text style={styles.sensorSelectSub}>ID: {device.id}</Text>
+                    </View>
+                    <View style={[styles.connectBadge, { backgroundColor: '#dbeafe' }]}>
+                      <Text style={[styles.connectBadgeText, { color: '#1d4ed8' }]}>Provision</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
+            <TouchableOpacity
+              style={[styles.closeModalButton, { backgroundColor: '#64748b', marginTop: 10 }]}
+              onPress={() => setShowWifiModal(false)}
+            >
+              <Text style={styles.closeModalButtonText}>Close</Text>
             </TouchableOpacity>
 
           </TouchableOpacity>
@@ -599,28 +735,28 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
         animationType="fade"
         onRequestClose={() => setShowOptimizeModal(false)}
       >
-        <TouchableOpacity 
-          style={styles.modalOverlay} 
-          activeOpacity={1} 
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
           onPress={() => setShowOptimizeModal(false)}
         >
           <TouchableOpacity activeOpacity={1} style={styles.modalCard}>
-            
+           
             <View style={styles.recHeaderRow}>
               <View style={styles.lightbulbBadge}>
-                <Text style={{ fontSize: 16 }}>💡</Text>
+                <Ionicons name="bulb" size={20} color="#eab308" />
               </View>
               <Text style={styles.recTitle}>Fertilizer Recommendations</Text>
             </View>
 
             <Text style={styles.recSubtitle}>
-              For lot size: {plotSize} • Based on soil test results
+              For lot size: {plotSize} Based on soil test results
             </Text>
 
             <View style={styles.recBoxLime}>
               <View style={styles.recBoxTopRow}>
                 <View style={styles.alertIconBadge}>
-                  <Text style={styles.alertIconText}>⚠️</Text>
+                  <Ionicons name="warning" size={16} color="#ef4444" />
                 </View>
                 <Text style={styles.recItemTitle}>Agricultural Lime</Text>
                 <View style={styles.priorityTag}>
@@ -650,13 +786,13 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
 
             <View style={styles.recBoxTip}>
               <Text style={styles.tipText}>
-                <Text style={styles.tipTitle}>⚠️ pH Prioritization: </Text>
+                <Text style={styles.tipTitle}><Ionicons name="warning" size={14} color="#b45309" /> pH Prioritization: </Text>
                 Apply lime treatment first to correct soil acidity. This prevents nutrient lockout and ensures NPK fertilizers will be effective.
               </Text>
             </View>
 
-            <TouchableOpacity 
-              style={styles.closeModalButton} 
+            <TouchableOpacity
+              style={styles.closeModalButton}
               onPress={() => setShowOptimizeModal(false)}
             >
               <Text style={styles.closeModalButtonText}>Close Recommendations</Text>
@@ -691,15 +827,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 15,
   },
-  backIcon: { color: '#ffffff', fontSize: 18, fontWeight: 'bold' },
   headerTitle: { color: '#ffffff', fontSize: 24, fontWeight: 'bold' },
   headerSubtitle: { color: '#d8f3dc', fontSize: 14, marginTop: 4 },
-  
-  // Grid layout
+ 
   gridContainer: { paddingHorizontal: 15, marginTop: -40 },
   gridRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
-  
-  // Metric Cards
+ 
   metricCard: {
     flex: 1,
     backgroundColor: '#ffffff',
@@ -717,21 +850,19 @@ const styles = StyleSheet.create({
   largeRowCard: {
     minHeight: 135,
   },
-  iconContainer: { 
-    width: 34, 
-    height: 34, 
-    borderRadius: 17, 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    marginBottom: 8 
+  iconContainer: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8
   },
-  cardEmoji: { fontSize: 16 },
   cardLabel: { fontSize: 12, color: '#64748b', fontWeight: '600' },
   cardValue: { fontSize: 18, fontWeight: 'bold', color: '#0f172a', marginVertical: 2 },
   cardValueBig: { fontSize: 22, fontWeight: 'bold', color: '#0f172a', marginVertical: 4 },
   cardStatus: { fontSize: 11, fontWeight: '700' },
 
-  // NPK Card
   npkCard: { flex: 1.25 },
   npkHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   cardLabelNPK: { fontSize: 13, color: '#0f172a', fontWeight: 'bold', marginLeft: 8 },
@@ -739,7 +870,6 @@ const styles = StyleSheet.create({
   npkLabel: { fontSize: 11, color: '#64748b', fontWeight: '500' },
   npkValue: { fontSize: 12, color: '#0f172a', fontWeight: 'bold' },
 
-  // Optimize Button
   optimizeButton: {
     flexDirection: 'row',
     backgroundColor: '#2d6a4f',
@@ -755,10 +885,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 6,
   },
-  optimizeButtonEmoji: { fontSize: 16, marginRight: 8 },
   optimizeButtonText: { color: '#ffffff', fontSize: 15, fontWeight: 'bold' },
 
-  // Charts
   chartCard: {
     backgroundColor: '#ffffff',
     borderRadius: 20,
@@ -770,7 +898,7 @@ const styles = StyleSheet.create({
   chartTitle: { fontSize: 16, fontWeight: 'bold', color: '#0f172a' },
   chartSubtitle: { fontSize: 12, color: '#94a3b8', marginBottom: 10 },
   chartStyle: { marginVertical: 8, borderRadius: 12, paddingRight: 35 },
-  
+ 
   legendGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -784,13 +912,12 @@ const styles = StyleSheet.create({
   legendDot: { width: 10, height: 10, borderRadius: 5, marginRight: 6 },
   legendText: { fontSize: 11, color: '#64748b', fontWeight: '500' },
 
-  // Sensor Information Card
-  infoCard: { 
-    backgroundColor: '#ffffff', 
-    borderRadius: 24, 
-    padding: 20, 
-    marginHorizontal: 15, 
-    marginTop: 15, 
+  infoCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 20,
+    marginHorizontal: 15,
+    marginTop: 15,
     elevation: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
@@ -800,13 +927,12 @@ const styles = StyleSheet.create({
   infoCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 },
   infoTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
   refreshButton: { flexDirection: 'row', alignItems: 'center' },
-  refreshIcon: { fontSize: 13, marginRight: 4 },
   refreshText: { fontSize: 13, color: '#15803d', fontWeight: '700' },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   infoLabel: { color: '#64748b', fontSize: 14 },
   infoValue: { fontWeight: 'bold', color: '#0f172a', fontSize: 14 },
   batteryText: { color: '#16a34a', fontWeight: 'bold' },
-  
+ 
   actionButton: {
     borderRadius: 16,
     paddingVertical: 14,
@@ -816,7 +942,6 @@ const styles = StyleSheet.create({
   },
   actionButtonText: { color: '#ffffff', fontSize: 15, fontWeight: 'bold' },
 
-  // --- POPUP MODAL STYLES ---
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.55)',
@@ -835,11 +960,51 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 12,
   },
-  recHeaderRow: {
+  modalHeaderTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a', marginBottom: 4 },
+  modalHeaderSubtitle: { fontSize: 13, color: '#64748b', marginBottom: 12 },
+  
+  inputField: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0f172a',
+    marginBottom: 10,
+  },
+  sectionHeaderLabel: { fontSize: 14, fontWeight: 'bold', color: '#0f172a', marginTop: 10, marginBottom: 6 },
+  emptyStateText: { textAlign: 'center', color: '#64748b', fontStyle: 'italic', marginVertical: 15 },
+  
+  sensorSelectItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    backgroundColor: '#f8fafc',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
+  sensorSelectIconBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#e2e8f0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  sensorSelectTitle: { fontSize: 14, fontWeight: 'bold', color: '#0f172a' },
+  sensorSelectSub: { fontSize: 11, color: '#64748b', marginTop: 2 },
+  connectBadge: {
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  connectBadgeText: { fontSize: 12, fontWeight: 'bold', color: '#15803d' },
+
+  recHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
   lightbulbBadge: {
     width: 32,
     height: 32,
@@ -849,18 +1014,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 10,
   },
-  recTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#0f172a',
-  },
-  recSubtitle: {
-    fontSize: 13,
-    color: '#64748b',
-    marginBottom: 16,
-  },
+  recTitle: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
+  recSubtitle: { fontSize: 13, color: '#64748b', marginBottom: 16 },
 
-  // Box 1: Lime
   recBoxLime: {
     backgroundColor: '#fef2f2',
     borderWidth: 1,
@@ -869,10 +1025,7 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 12,
   },
-  recBoxTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
+  recBoxTopRow: { flexDirection: 'row', alignItems: 'center' },
   alertIconBadge: {
     width: 32,
     height: 32,
@@ -882,38 +1035,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 10,
   },
-  alertIconText: { fontSize: 14 },
-  recItemTitle: {
-    fontSize: 17,
-    fontWeight: 'bold',
-    color: '#0f172a',
-    flex: 1,
-  },
-  priorityTag: {
-    backgroundColor: '#ffe4e6',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  priorityTagText: {
-    color: '#e11d48',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  sackCount: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#064e3b',
-    marginTop: 6,
-    marginBottom: 4,
-  },
-  recDescText: {
-    fontSize: 13,
-    color: '#334155',
-    lineHeight: 18,
-  },
+  recItemTitle: { fontSize: 17, fontWeight: 'bold', color: '#0f172a', flex: 1 },
+  priorityTag: { backgroundColor: '#ffe4e6', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  priorityTagText: { color: '#e11d48', fontSize: 10, fontWeight: 'bold' },
+  sackCount: { fontSize: 20, fontWeight: 'bold', color: '#064e3b', marginTop: 6, marginBottom: 4 },
+  recDescText: { fontSize: 13, color: '#334155', lineHeight: 18 },
 
-  // Box 2: Urea
   recBoxUrea: {
     backgroundColor: '#f0fdf4',
     borderWidth: 1,
@@ -931,13 +1058,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 10,
   },
-  numberIconText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
+  numberIconText: { color: '#ffffff', fontWeight: 'bold', fontSize: 14 },
 
-  // Box 3: Tip
   recBoxTip: {
     backgroundColor: '#fefce8',
     borderWidth: 1,
@@ -946,26 +1068,14 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 16,
   },
-  tipText: {
-    fontSize: 13,
-    color: '#713f12',
-    lineHeight: 18,
-  },
-  tipTitle: {
-    fontWeight: 'bold',
-    color: '#a16207',
-  },
+  tipText: { fontSize: 13, color: '#713f12', lineHeight: 18 },
+  tipTitle: { fontWeight: 'bold', color: '#a16207' },
 
-  // Modal Close Button
   closeModalButton: {
     backgroundColor: '#2d6a4f',
     borderRadius: 14,
     paddingVertical: 12,
     alignItems: 'center',
   },
-  closeModalButtonText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
-    fontSize: 15,
-  },
+  closeModalButtonText: { color: '#ffffff', fontWeight: 'bold', fontSize: 15 },
 });

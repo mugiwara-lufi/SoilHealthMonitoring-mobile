@@ -1,34 +1,38 @@
 import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  TextInput, 
-  TouchableOpacity, 
-  StyleSheet, 
-  KeyboardAvoidingView, 
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  KeyboardAvoidingView,
   Platform,
-  SafeAreaView
+  SafeAreaView,
+  Modal
 } from 'react-native';
 // If you are using Expo, you can use Ionicons and FontAwesome5
 // from @expo/vector-icons. If you are not using Expo, you will need to
 // install and link react-native-vector-icons.
-import { Ionicons, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons'; 
+import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 
-export default function LoginScreen({ onLogin }) {
+export default function LoginScreen({ onLogin, onNavigateRegister }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [secureTextEntry, setSecureTextEntry] = useState(true);
+  
+  // State to control the Registration Role Popup
+  const [showRoleModal, setShowRoleModal] = useState(false);
 
   const isFormValid = email.trim().length > 0 && password.trim().length > 0;
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
         <View style={styles.inner}>
-          
+         
           {/* Logo Section */}
           <View style={styles.logoContainer}>
             <View style={styles.iconCircle}>
@@ -38,18 +42,17 @@ export default function LoginScreen({ onLogin }) {
             <Text style={styles.subtitle}>Soil Health Monitor</Text>
             <Text style={styles.platformSub}>Joint Soil Monitoring Application Platform</Text>
           </View>
-          
-          {/* Email Field */}
-          <Text style={styles.inputLabel}>Email Address</Text>
+         
+          {/* Email / Username Field */}
+          <Text style={styles.inputLabel}>Username / Email</Text>
           <View style={styles.inputWrapper}>
-            <Ionicons name="mail-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
-            <TextInput 
-              style={styles.input} 
-              placeholder="Enter your email" 
+            <Ionicons name="person-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Enter your username or email"
               placeholderTextColor="#94a3b8"
-              value={email} 
-              onChangeText={setEmail} 
-              keyboardType="email-address"
+              value={email}
+              onChangeText={setEmail}
               autoCapitalize="none"
             />
           </View>
@@ -58,11 +61,11 @@ export default function LoginScreen({ onLogin }) {
           <Text style={styles.inputLabel}>Password</Text>
           <View style={styles.inputWrapper}>
             <Ionicons name="lock-closed-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
-            <TextInput 
-              style={styles.input} 
-              placeholder="Enter your password" 
+            <TextInput
+              style={styles.input}
+              placeholder="Enter your password"
               placeholderTextColor="#94a3b8"
-              value={password} 
+              value={password}
               onChangeText={setPassword}
               secureTextEntry={secureTextEntry}
             />
@@ -70,11 +73,11 @@ export default function LoginScreen({ onLogin }) {
                 <Ionicons name={secureTextEntry ? "eye-outline" : "eye-off-outline"} size={20} color="#94a3b8" />
             </TouchableOpacity>
           </View>
-          
+         
           {/* Login Button */}
-          <TouchableOpacity 
-            style={[styles.button, { opacity: isFormValid ? 1 : 0.7 }]} 
-            onPress={() => isFormValid && onLogin(email, password)} 
+          <TouchableOpacity
+            style={[styles.button, { opacity: isFormValid ? 1 : 0.7 }]}
+            onPress={() => isFormValid && onLogin(email, password)}
             disabled={!isFormValid}
           >
             <Text style={styles.buttonText}>Login to Dashboard</Text>
@@ -90,7 +93,7 @@ export default function LoginScreen({ onLogin }) {
           {/* Sign Up Link */}
           <View style={styles.signupTextContainer}>
             <Text style={styles.noAccountText}>Don't have an account? </Text>
-            <TouchableOpacity onPress={() => {/* Handle Sign Up Navigation */}}>
+            <TouchableOpacity onPress={() => setShowRoleModal(true)}>
                 <Text style={styles.signupText}>Sign Up</Text>
             </TouchableOpacity>
           </View>
@@ -101,6 +104,42 @@ export default function LoginScreen({ onLogin }) {
             <Text style={styles.footerText}>USTP · Cagayan de Oro · 2026</Text>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Role Selection Modal */}
+      <Modal visible={showRoleModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Choose Account Type</Text>
+            <Text style={styles.modalSub}>How would you like to register?</Text>
+
+            <TouchableOpacity 
+              style={styles.roleButton} 
+              onPress={() => { setShowRoleModal(false); onNavigateRegister('AdminRegister'); }}
+            >
+              <Ionicons name="shield-checkmark-outline" size={24} color="#15803d" />
+              <View style={styles.roleTextContainer}>
+                <Text style={styles.roleTitle}>Farm Owner / Admin</Text>
+                <Text style={styles.roleDesc}>Manage farms, invite farmers, and oversee plots.</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.roleButton} 
+              onPress={() => { setShowRoleModal(false); onNavigateRegister('FarmerRegister'); }}
+            >
+              <Ionicons name="leaf-outline" size={24} color="#15803d" />
+              <View style={styles.roleTextContainer}>
+                <Text style={styles.roleTitle}>Farmer</Text>
+                <Text style={styles.roleDesc}>Inherit plots and monitor soil health data.</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.cancelModalButton} onPress={() => setShowRoleModal(false)}>
+              <Text style={styles.cancelModalText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -108,9 +147,9 @@ export default function LoginScreen({ onLogin }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fcfdfd' },
   keyboardView: { flex: 1 },
-  inner: { 
-    flex: 1, 
-    paddingHorizontal: 25, 
+  inner: {
+    flex: 1,
+    paddingHorizontal: 25,
     justifyContent: 'flex-start',
     paddingTop: 30
   },
@@ -144,25 +183,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#fff',
-    borderWidth: 1, 
-    borderColor: '#e2e8f0', 
-    paddingVertical: Platform.OS === 'ios' ? 18 : 14, 
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    paddingVertical: Platform.OS === 'ios' ? 18 : 14,
     paddingHorizontal: 18,
-    borderRadius: 15, 
+    borderRadius: 15,
     marginBottom: 20,
   },
   inputIcon: {
     marginRight: 10,
   },
-  input: { 
+  input: {
     flex: 1,
     fontSize: 16,
     color: '#000'
   },
-  button: { 
-    backgroundColor: '#15803d', 
-    padding: 20, 
-    borderRadius: 15, 
+  button: {
+    backgroundColor: '#15803d',
+    padding: 20,
+    borderRadius: 15,
     alignItems: 'center',
     marginTop: 10,
     marginBottom: 20,
@@ -213,5 +252,66 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#94a3b8',
     textAlign: 'center',
+  },
+
+  /* ---------- MODAL STYLES ---------- */
+  modalOverlay: { 
+    flex: 1, 
+    backgroundColor: 'rgba(0,0,0,0.5)', 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  modalContent: { 
+    width: '85%', 
+    backgroundColor: '#fff', 
+    borderRadius: 20, 
+    padding: 25, 
+    alignItems: 'center' 
+  },
+  modalTitle: { 
+    fontSize: 20, 
+    fontWeight: 'bold', 
+    color: '#0f172a', 
+    marginBottom: 8 
+  },
+  modalSub: { 
+    fontSize: 14, 
+    color: '#64748b', 
+    marginBottom: 20, 
+    textAlign: 'center' 
+  },
+  roleButton: { 
+    width: '100%', 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#f8fafc', 
+    padding: 15, 
+    borderRadius: 12, 
+    borderWidth: 1, 
+    borderColor: '#e2e8f0', 
+    marginBottom: 15 
+  },
+  roleTextContainer: { 
+    flex: 1, 
+    marginLeft: 15 
+  },
+  roleTitle: { 
+    fontSize: 16, 
+    fontWeight: 'bold', 
+    color: '#0f172a' 
+  },
+  roleDesc: { 
+    fontSize: 12, 
+    color: '#64748b', 
+    marginTop: 2 
+  },
+  cancelModalButton: { 
+    marginTop: 10, 
+    padding: 10 
+  },
+  cancelModalText: { 
+    color: '#64748b', 
+    fontWeight: '600', 
+    fontSize: 16 
   }
 });

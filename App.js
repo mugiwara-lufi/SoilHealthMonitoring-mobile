@@ -1,12 +1,5 @@
-
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  StyleSheet,
-  TouchableOpacity,
-  Text,
-  Alert,
-} from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
 
 import ExploreScreen from './screens/ExploreScreen';
 import AdminScreen from './screens/AdminScreen';
@@ -15,20 +8,22 @@ import HistoryScreen from './screens/HistoryScreen';
 import MonitorScreen from './screens/MonitorScreen';
 import LoginScreen from './screens/LoginScreen';
 import ProfileScreen from './screens/ProfileScreen';
+import AdminRegistrationScreen from './screens/AdminRegistrationScreen';
+import RegistrationScreen from './screens/RegistrationScreen';
 
-const BASE_URL = 'http://192.168.11.28:8000/api';
+const BASE_URL = 'http://10.175.94.28:8000/api';
 const AUTH_URL = `${BASE_URL}/api-token-auth/`;
+const REGISTER_URL = `${BASE_URL}/register/`; // Matches Django backend register_user endpoint
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
-  const [currentScreen, setCurrentScreen] = useState('Explore');
+  const [currentScreen, setCurrentScreen] = useState('Login'); // Default to Login screen when unauthenticated
   const [plots, setPlots] = useState([]);
   const [selectedPlot, setSelectedPlot] = useState(null);
   const [usersList, setUsersList] = useState([]);
 
   // -------------------- FETCH USERS --------------------
-
   const fetchUsers = async (activeToken = token) => {
     if (!activeToken) return;
 
@@ -52,7 +47,6 @@ export default function App() {
   };
 
   // -------------------- FETCH PLOTS --------------------
-
   const fetchPlots = async (manualToken = null) => {
     const activeToken = manualToken || token;
 
@@ -93,7 +87,7 @@ export default function App() {
             latest
               ? 'Online'
               : 'Offline',
-          icon: '🌱',
+          icon: 'leaf',
           color: '#1b5e20',
           location: plot.location || 'N/A',
           sensor_id: plot.sensor_id || null,
@@ -132,7 +126,6 @@ export default function App() {
 
       setSelectedPlot((previousPlot) => {
         if (!previousPlot) return null;
-
         return (
           formattedData.find(
             (plot) => plot.id === String(previousPlot.id)
@@ -145,7 +138,6 @@ export default function App() {
   };
 
   // -------------------- REFRESH DATA AFTER LOGIN --------------------
-
   useEffect(() => {
     if (token) {
       fetchPlots(token);
@@ -159,8 +151,34 @@ export default function App() {
     }
   }, [token, user]);
 
-  // -------------------- LOGIN --------------------
+  // -------------------- REGISTRATION --------------------
+  const handleRegister = async (formData) => {
+    try {
+      const response = await fetch(REGISTER_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(formData),
+      });
 
+      const data = await response.json();
+
+      if (response.ok) {
+        Alert.alert('Success', 'Account created successfully! Please log in.');
+        setCurrentScreen('Login');
+      } else {
+        const errorMsg = data.error || Object.values(data).flat().join('\n') || 'Registration failed';
+        Alert.alert('Registration Error', errorMsg);
+      }
+    } catch (error) {
+      console.error('Registration API Error:', error);
+      Alert.alert('Connection Error', 'Could not connect to the registration server.');
+    }
+  };
+
+  // -------------------- LOGIN --------------------
   const handleLogin = async (username, password) => {
     try {
       const response = await fetch(AUTH_URL, {
@@ -220,28 +238,24 @@ export default function App() {
   };
 
   // -------------------- LOGOUT --------------------
-
   const handleLogout = () => {
     setUser(null);
     setToken(null);
     setPlots([]);
     setUsersList([]);
     setSelectedPlot(null);
-    setCurrentScreen('Explore');
+    setCurrentScreen('Login');
   };
 
   // -------------------- SELECT A PLOT --------------------
-
   const handleSelectPlot = (plot) => {
     setSelectedPlot(plot);
     setCurrentScreen('Monitor');
   };
 
   // -------------------- NAVIGATION --------------------
-
   const handleSelectTab = (tabId) => {
     if (tabId === 'Explore') {
-      // Admins can open the farmer interface without changing roles.
       setCurrentScreen('Explore');
     } else if (tabId === 'Farm') {
       const isAdmin =
@@ -268,7 +282,6 @@ export default function App() {
   };
 
   // -------------------- ADD PLOT --------------------
-
   const handleAddPlot = async (newPlot) => {
     if (!token) {
       Alert.alert('Login Required', 'Please log in before adding a plot.');
@@ -327,7 +340,6 @@ export default function App() {
           .join('\n');
       } else {
         const errorText = await response.text();
-
         if (errorText) {
           errorMessage = `${errorMessage}\n${errorText.slice(0, 300)}`;
         }
@@ -347,7 +359,6 @@ export default function App() {
   };
 
   // -------------------- ADD SENSOR --------------------
-
   const handleAddSensor = async (plotId) => {
     const generatedSensorId =
       `SN-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -376,7 +387,6 @@ export default function App() {
   };
 
   // -------------------- REMOVE SENSOR --------------------
-
   const handleRemoveSensor = async (plotId) => {
     try {
       const response = await fetch(`${BASE_URL}/plots/${plotId}/`, {
@@ -402,7 +412,6 @@ export default function App() {
   };
 
   // -------------------- DELETE PLOT --------------------
-
   const handleDeletePlot = async (id) => {
     try {
       const response = await fetch(`${BASE_URL}/plots/${id}/`, {
@@ -433,7 +442,7 @@ export default function App() {
         const errorData = await response.json();
         errorMessage = errorData.error || JSON.stringify(errorData);
       } catch {
-        // Keep the fallback message if the response is not JSON.
+        // Keep fallback message if response is not JSON.
       }
 
       Alert.alert('Delete Failed', errorMessage);
@@ -444,7 +453,6 @@ export default function App() {
   };
 
   // -------------------- ASSIGN PLOTS --------------------
-
   const handleAssignPlots = async (userId, plotIds) => {
     try {
       const response = await fetch(
@@ -472,17 +480,36 @@ export default function App() {
     }
   };
 
-  // -------------------- LOGIN SCREEN --------------------
-
+  // -------------------- UNAUTHENTICATED SCREENS (LOGIN / REGISTRATION) --------------------
   if (!user) {
-    return <LoginScreen onLogin={handleLogin} />;
+    if (currentScreen === 'AdminRegister') {
+      return (
+        <AdminRegistrationScreen
+          onRegister={handleRegister}
+          onBackToLogin={() => setCurrentScreen('Login')}
+        />
+      );
+    }
+    if (currentScreen === 'FarmerRegister') {
+      return (
+        <RegistrationScreen
+          onRegister={handleRegister}
+          onBackToLogin={() => setCurrentScreen('Login')}
+        />
+      );
+    }
+    return (
+      <LoginScreen
+        onLogin={handleLogin}
+        onNavigateRegister={(screen) => setCurrentScreen(screen)}
+      />
+    );
   }
 
   const currentAdminUsername = user.username || user.name;
   const currentAdminId = user.id;
 
   // -------------------- DASHBOARD SCREENS --------------------
-
   const renderDashboardScreen = () => {
     if (currentScreen === 'Admin') {
       return (
@@ -517,7 +544,6 @@ export default function App() {
   };
 
   // -------------------- MAIN RENDER --------------------
-
   return (
     <View style={{ flex: 1 }}>
       {currentScreen === 'Explore' || currentScreen === 'Admin' ? (
@@ -570,7 +596,7 @@ export default function App() {
             )
           }
         >
-          <Text style={styles.backText}>⬅ Back to Overview</Text>
+          <Text style={styles.backText}>Back to Overview</Text>
         </TouchableOpacity>
       )}
     </View>
