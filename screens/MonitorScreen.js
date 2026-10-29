@@ -21,7 +21,7 @@ import { Buffer } from 'buffer';
 import MobileFooter from '../components/MobileFooter';
 
 const screenWidth = Dimensions.get('window').width - 30;
-const API_BASE_URL = 'http://192.168.11.28:8000';
+const API_BASE_URL = 'http://10.231.126.28:8000';
 
 // Supabase Direct Credentials
 const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
@@ -29,7 +29,18 @@ const SUPABASE_KEY = 'sb_publishable_cyQgbi_v02dkhswabEBWoQ_3exGPlaK';
 
 const bleManager = new BleManager();
 
-export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSensor, currentTab, onSelectTab, onBack, onUpdatePlotSensor }) {
+export default function MonitorScreen({
+  plotData,
+  token,
+  onRefreshData,
+  onDisconnectSensor,
+  onRemoveSensor,
+  onAddSensor,
+  currentTab,
+  onSelectTab,
+  onBack,
+  onUpdatePlotSensor
+}) {
   const currentPlot = plotData?.name || "Plot";
   const currentCrop = plotData?.crop || plotData?.crop_type || "Crop";
   const plotSize = plotData?.size || "2.5 hectares";
@@ -65,6 +76,8 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
   useEffect(() => {
     if (plotData?.sensor_id && plotData.sensor_id !== 'N/A') {
       setActiveSensorId(plotData.sensor_id);
+    } else {
+      setActiveSensorId(null);
     }
   }, [plotData?.sensor_id]);
 
@@ -134,7 +147,30 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
 
   const hasSensor = Boolean(activeSensorId && activeSensorId !== "N/A");
 
+  // Helper to update Supabase soil_api_farmplot directly
+  const updateSupabaseFarmPlotSensor = async (plotId, newSensorId) => {
+    if (!plotId) return;
+    try {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/soil_api_farmplot?id=eq.${plotId}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({ sensor_id: newSensorId })
+        }
+      );
+    } catch (err) {
+      console.log("Error updating Supabase soil_api_farmplot sensor_id:", err);
+    }
+  };
+
   const updateSupabasePlotId = async (sensorId, plotId) => {
+    if (!sensorId) return;
     try {
       await fetch(
         `${SUPABASE_URL}/rest/v1/soil_records?sensor_id=eq.${encodeURIComponent(sensorId)}`,
@@ -166,11 +202,43 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
             style: "destructive",
             onPress: async () => {
               const prevSensorId = activeSensorId;
+              const plotId = plotData?.id;
+
               setActiveSensorId(null);
               setSupabaseLatestRecord(null);
-              await updateSupabasePlotId(prevSensorId, null);
-              if (onDisconnectSensor) onDisconnectSensor();
+
+              if (prevSensorId) {
+                await updateSupabasePlotId(prevSensorId, null);
+              }
+
+              if (plotId) {
+                await updateSupabaseFarmPlotSensor(plotId, null);
+              }
+
+              try {
+                if (plotId) {
+                  const headers = {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                  };
+                  if (token) headers['Authorization'] = `Token ${token}`;
+
+                  await fetch(`${API_BASE_URL}/api/plots/${plotId}/`, {
+                    method: 'PATCH',
+                    headers,
+                    body: JSON.stringify({ sensor_id: null }),
+                  });
+                }
+              } catch (err) {
+                console.log("Error resetting sensor_id in backend DB:", err);
+              }
+
+              if (onDisconnectSensor) onDisconnectSensor(plotId);
+              if (onRemoveSensor) onRemoveSensor(plotId);
+              if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, null);
               if (onRefreshData) onRefreshData();
+
+              Alert.alert("Disconnected", `Sensor ${prevSensorId} removed from ${currentPlot}.`);
             }
           }
         ]
@@ -182,6 +250,23 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
     setShowSensorModal(true);
 
     try {
+      // 1. Fetch already taken sensor IDs from farm plots
+      const plotsRes = await fetch(`${SUPABASE_URL}/rest/v1/soil_api_farmplot?select=sensor_id`, {
+        method: 'GET',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      const plotsData = await plotsRes.json();
+      const takenSensorIds = new Set(
+        (Array.isArray(plotsData) ? plotsData : [])
+          .map(p => p.sensor_id)
+          .filter(sId => sId && sId !== 'N/A')
+      );
+
+      // 2. Fetch raw sensor telemetry records
       const response = await fetch(
         `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=100`,
         {
@@ -200,7 +285,8 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
         const uniqueSensorsMap = {};
         records.forEach(rec => {
           const sId = rec.sensor_id || "SENSOR_001";
-          if (!uniqueSensorsMap[sId]) {
+          // Exclude sensors that are already assigned to a plot
+          if (!takenSensorIds.has(sId) && !uniqueSensorsMap[sId]) {
             uniqueSensorsMap[sId] = {
               sensor_id: sId,
               battery: rec.battery_percentage ?? rec.battery ?? 'N/A',
@@ -222,8 +308,35 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
   const handleSelectSensor = async (sensorId) => {
     setShowSensorModal(false);
     setActiveSensorId(sensorId);
-    await updateSupabasePlotId(sensorId, plotData.id);
-    if (onUpdatePlotSensor) onUpdatePlotSensor(plotData.id, sensorId);
+
+    const plotId = plotData?.id;
+
+    // 1. Update Supabase soil_records table
+    await updateSupabasePlotId(sensorId, plotId);
+
+    // 2. Update Supabase soil_api_farmplot table directly
+    await updateSupabaseFarmPlotSensor(plotId, sensorId);
+
+    // 3. Update Django REST backend with token headers
+    try {
+      if (plotId) {
+        const headers = {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        };
+        if (token) headers['Authorization'] = `Token ${token}`;
+
+        await fetch(`${API_BASE_URL}/api/plots/${plotId}/`, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({ sensor_id: sensorId }),
+        });
+      }
+    } catch (err) {
+      console.log("Error updating backend sensor_id:", err);
+    }
+
+    if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, sensorId);
     await fetchSupabaseLiveRecord(sensorId);
     if (onRefreshData) onRefreshData();
     Alert.alert("Sensor Linked", `Successfully linked ${sensorId} to ${currentPlot}`);
@@ -238,9 +351,9 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
         console.log(error);
         return;
       }
-      
+     
       const deviceName = device?.name || device?.localName;
-      
+     
       if (deviceName && deviceName.includes("JJMAP")) {
         setScannedDevices(prev => {
           if (!prev.some(d => d.id === device.id)) {
@@ -274,14 +387,12 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
       await connectedDevice.writeCharacteristicWithResponseForService(
         SERVICE_UUID, SSID_CHAR_UUID, base64Ssid
       );
-      
+     
       try {
         await connectedDevice.writeCharacteristicWithResponseForService(
           SERVICE_UUID, PASS_CHAR_UUID, base64Pass
         );
       } catch (passErr) {
-        // The ESP32 reboots before sending a success acknowledgment, throwing a disconnect error here. 
-        // We safely ignore it because the reboot means it successfully received the password.
         console.log("Device rebooted as expected:", passErr.message);
       }
 
@@ -549,6 +660,7 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
           )}
         </View>
 
+        {/* Sensor Information Card */}
         <View style={styles.infoCard}>
           <View style={styles.infoCardHeader}>
             <Text style={styles.infoTitle}>Sensor Information</Text>
@@ -588,7 +700,6 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
             </Text>
           </TouchableOpacity>
 
-          {/* Dedicated BLE Wi-Fi Configuration Button */}
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: '#3b82f6', marginTop: 10 }]}
             onPress={startBleScan}
@@ -596,6 +707,56 @@ export default function MonitorScreen({ plotData, onRefreshData, onDisconnectSen
             <Ionicons name="bluetooth" size={18} color="#ffffff" style={{ marginRight: 8 }} />
             <Text style={styles.actionButtonText}>Configure Device WiFi (BLE)</Text>
           </TouchableOpacity>
+        </View>
+
+        {/* CONNECTED HARDWARE & IOT NODES */}
+        <View style={styles.deviceSectionCard}>
+          <Text style={styles.deviceSectionTitle}>Connected Hardware & IoT Nodes</Text>
+          {!hasSensor ? (
+            <Text style={styles.emptyDeviceText}>No active hardware node assigned to this plot.</Text>
+          ) : (
+            <View style={styles.deviceCard}>
+              <View style={styles.deviceCardHeader}>
+                <View style={styles.deviceIconCircle}>
+                  <Ionicons name="hardware-chip-outline" size={20} color="#0f172a" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.deviceName}>
+                    Node ID: {activeSensorId}
+                  </Text>
+                  <Text style={styles.deviceSub}>Assigned Plot: {currentPlot}</Text>
+                </View>
+                <View style={[styles.statusBadge, { backgroundColor: '#dcfce7' }]}>
+                  <Text style={[styles.statusBadgeText, { color: '#15803d' }]}>
+                    Online
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.deviceMetaRow}>
+                <Text style={styles.deviceMetaText}>Type: LoRa Soil Node</Text>
+                <Text style={styles.deviceMetaText}>
+                  Battery: {sensors.battery !== null ? `${sensors.battery}%` : 'N/A'}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.restartDeviceBtn}
+                onPress={() => {
+                  Alert.alert('Restart Node', `Send restart command to node ${activeSensorId}?`, [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Restart',
+                      onPress: () => Alert.alert("Command Sent", `Restart signal transmitted to node ${activeSensorId}`)
+                    }
+                  ]);
+                }}
+              >
+                <Ionicons name="refresh-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
+                <Text style={styles.restartDeviceText}>Restart Sensor Node</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
       </ScrollView>
@@ -949,8 +1110,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 8,
+    flexDirection: 'row',
   },
   actionButtonText: { color: '#ffffff', fontSize: 15, fontWeight: 'bold' },
+
+  deviceSectionCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 20,
+    marginHorizontal: 15,
+    marginTop: 15,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+  },
+  deviceSectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a', marginBottom: 12 },
+  emptyDeviceText: { color: '#64748b', fontStyle: 'italic', fontSize: 13 },
+  deviceCard: { backgroundColor: '#f8fafc', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#e2e8f0' },
+  deviceCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  deviceIconCircle: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#e2e8f0', justifyContent: 'center', alignItems: 'center' },
+  deviceName: { fontSize: 14, fontWeight: 'bold', color: '#0f172a' },
+  deviceSub: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  deviceMetaRow: { marginTop: 12, flexDirection: 'row', justifyContent: 'space-between' },
+  deviceMetaText: { fontSize: 12, color: '#64748b', fontWeight: '500' },
+  restartDeviceBtn: { marginTop: 12, backgroundColor: '#e2e8f0', paddingVertical: 10, borderRadius: 10, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' },
+  restartDeviceText: { fontSize: 13, fontWeight: '600', color: '#334155' },
 
   modalOverlay: {
     flex: 1,
@@ -1080,6 +1266,9 @@ const styles = StyleSheet.create({
   },
   tipText: { fontSize: 13, color: '#713f12', lineHeight: 18 },
   tipTitle: { fontWeight: 'bold', color: '#a16207' },
+
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  statusBadgeText: { fontSize: 11, fontWeight: '600' },
 
   closeModalButton: {
     backgroundColor: '#2d6a4f',

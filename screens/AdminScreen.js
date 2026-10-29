@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+// AdminScreen.js
+
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,10 +13,14 @@ import {
   Modal,
   Alert,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  ActivityIndicator
 } from 'react-native';
-// Add the icon library import
 import { Ionicons } from '@expo/vector-icons';
+
+// Supabase Direct Credentials
+const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_cyQgbi_v02dkhswabEBWoQ_3exGPlaK';
 
 export default function AdminScreen({
   plots = [],
@@ -30,15 +36,18 @@ export default function AdminScreen({
   onAddUser,
   onUpdateUser,
   onDeleteUser,
-  onRestartDevice
+  onRefreshData
 }) {
   const [activeSubTab, setActiveSubTab] = useState('Overview');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Find logged in admin object safely
+  // Supabase Logs & Latest Readings State
+  const [supabaseLogs, setSupabaseLogs] = useState([]);
+  const [plotLatestPhMap, setPlotLatestPhMap] = useState({});
+  const [loadingLogs, setLoadingLogs] = useState(false);
+
   const safeUsers = users || [];
   const safePlots = plots || [];
-  const safeLogs = logs || [];
 
   const loggedInAdmin = safeUsers.find(
     (u) =>
@@ -51,7 +60,6 @@ export default function AdminScreen({
     loggedInAdmin?.username ||
     'Admin';
 
-  // Modal State for Add/Edit User
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [formData, setFormData] = useState({
@@ -64,7 +72,80 @@ export default function AdminScreen({
     assignedPlotIds: []
   });
 
-  // Filter Users: ONLY show users created by/linked to THIS specific admin (plus the admin's own profile)
+  useEffect(() => {
+    fetchPlotLatestReadings();
+    if (activeSubTab === 'Logs') {
+      fetchSoilLogsFromSupabase();
+    }
+  }, [activeSubTab, plots]);
+
+  const fetchPlotLatestReadings = async () => {
+    try {
+      // Fetch latest soil records to match plots by sensor_id or plot_id
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=100`,
+        {
+          method: 'GET',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (response.ok) {
+        const records = await response.json();
+        if (Array.isArray(records)) {
+          const phMap = {};
+          records.forEach((rec) => {
+            const sId = rec.sensor_id;
+            const pId = rec.plot_id;
+            const phVal = rec.ph_level ?? rec.ph;
+
+            if (phVal !== undefined && phVal !== null) {
+              if (sId && !phMap[`sensor_${sId}`]) {
+                phMap[`sensor_${sId}`] = phVal;
+              }
+              if (pId && !phMap[`plot_${pId}`]) {
+                phMap[`plot_${pId}`] = phVal;
+              }
+            }
+          });
+          setPlotLatestPhMap(phMap);
+        }
+      }
+    } catch (err) {
+      console.log('Error fetching plot latest pH readings:', err);
+    }
+  };
+
+  const fetchSoilLogsFromSupabase = async () => {
+    setLoadingLogs(true);
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=50`,
+        {
+          method: 'GET',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setSupabaseLogs(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.log('Error fetching soil logs:', err);
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
   const adminVisibleUsers = safeUsers.filter((u) => {
     const isSelf = (currentAdminId && u.id === currentAdminId) ||
                    (currentAdminUsername && u.username === currentAdminUsername);
@@ -75,14 +156,12 @@ export default function AdminScreen({
     return isSelf || isCreatedByThisAdmin;
   });
 
-  // Filter Plots: ONLY show plots owned by THIS admin OR owned by users who inherited this admin's email/account
   const adminVisiblePlots = safePlots.filter((p) => {
-    const isOwnerPlot = p.farmer === currentAdminId || 
-                        p.farmer_username === currentAdminUsername || 
+    const isOwnerPlot = p.farmer === currentAdminId ||
+                        p.farmer_username === currentAdminUsername ||
                         p.owner_id === currentAdminId ||
                         (p.owner_username && p.owner_username === currentAdminUsername);
-    
-    // Also check if plot belongs to any sub-farmer/user visible to this admin
+   
     const belongsToVisibleUser = adminVisibleUsers.some(
       (u) => u.id === p.farmer || u.username === p.farmer_username
     );
@@ -90,7 +169,6 @@ export default function AdminScreen({
     return isOwnerPlot || belongsToVisibleUser;
   });
 
-  // Safe search filter on the visible users list
   const filteredUsers = adminVisibleUsers.filter(u => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return true;
@@ -102,18 +180,19 @@ export default function AdminScreen({
     return username.includes(query) || name.includes(query) || email.includes(query);
   });
 
-  // Dynamic calculations based on filtered visible plots
   const totalPlots = adminVisiblePlots.length;
   const sensorsAssigned = adminVisiblePlots.filter(p => p.sensor_id && p.sensor_id !== 'N/A');
   const onlineSensors = adminVisiblePlots.filter(p => p.status === 'Online');
  
   const phAlertsCount = adminVisiblePlots.filter(p => {
-    const latestPh = p.records && p.records.length > 0 ? p.records[0].ph_level : p.sensors?.ph;
+    const latestPh =
+      plotLatestPhMap[`plot_${p.id}`] ||
+      plotLatestPhMap[`sensor_${p.sensor_id}`] ||
+      (p.records && p.records.length > 0 ? p.records[0].ph_level : p.sensors?.ph);
     const phVal = parseFloat(latestPh);
     return !isNaN(phVal) && phVal < 5.5;
   }).length;
 
-  // Modal handlers
   const handleOpenAddModal = () => {
     setEditingUser(null);
     setFormData({
@@ -132,7 +211,6 @@ export default function AdminScreen({
     setEditingUser(user);
     const fullName = user.name || `${user.first_name || ''} ${user.last_name || ''}`.trim();
    
-    // Find plot IDs currently assigned to this user from visible plots
     const existingAssignedPlots = adminVisiblePlots
       .filter(p => p.farmer === user.id || p.farmer_username === user.username)
       .map(p => p.id);
@@ -253,7 +331,7 @@ export default function AdminScreen({
 
           {/* Navigation Sub-Tabs */}
           <View style={styles.subTabRow}>
-            {['Overview', 'Users', 'Devices', 'Logs'].map((tab) => {
+            {['Overview', 'Users', 'Logs'].map((tab) => {
               const isActive = activeSubTab === tab;
               return (
                 <TouchableOpacity
@@ -328,16 +406,31 @@ export default function AdminScreen({
               )}
             </View>
 
-            {/* Plot Overview */}
+            {/* Plot Overview with Refresh Button */}
             <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>Plot Overview</Text>
+              <View style={styles.sectionCardHeaderRow}>
+                <Text style={styles.sectionTitle}>Plot Overview</Text>
+                <TouchableOpacity
+                  style={styles.refreshOverviewBtn}
+                  onPress={() => {
+                    fetchPlotLatestReadings();
+                    if (onRefreshData) onRefreshData();
+                  }}
+                >
+                  <Ionicons name="refresh" size={14} color="#15803d" style={{ marginRight: 4 }} />
+                  <Text style={styles.refreshOverviewText}>Refresh</Text>
+                </TouchableOpacity>
+              </View>
+
               {adminVisiblePlots.length === 0 ? (
                 <Text style={styles.emptyText}>No farm plots available.</Text>
               ) : (
                 adminVisiblePlots.map((plot) => {
-                  const latestPh = plot.records && plot.records.length > 0
-                    ? plot.records[0].ph_level
-                    : (plot.sensors?.ph ?? 'N/A');
+                  const latestPh =
+                    plotLatestPhMap[`plot_${plot.id}`] ||
+                    plotLatestPhMap[`sensor_${plot.sensor_id}`] ||
+                    (plot.records && plot.records.length > 0 ? plot.records[0].ph_level : (plot.sensors?.ph ?? 'N/A'));
+                 
                   const isAcidic = !isNaN(parseFloat(latestPh)) && parseFloat(latestPh) < 5.5;
 
                   return (
@@ -411,7 +504,6 @@ export default function AdminScreen({
                
                 const isActive = user.is_active !== undefined ? user.is_active : user.status !== 'Inactive';
 
-                // Find assigned plots for this user from visible plots
                 const userPlots = adminVisiblePlots.filter(p => p.farmer === user.id || p.farmer_username === user.username);
 
                 return (
@@ -455,7 +547,6 @@ export default function AdminScreen({
                           </Text>
                         ) : null}
                        
-                        {/* Assigned Plots Preview */}
                         <View style={styles.assignedPlotsContainer}>
                           <Text style={styles.assignedPlotsLabel}>Assigned Plots ({userPlots.length}):</Text>
                           {userPlots.length === 0 ? (
@@ -514,51 +605,50 @@ export default function AdminScreen({
           </View>
         )}
 
-        {/* DEVICES SUB-TAB */}
-        {activeSubTab === 'Devices' && (
-          <View style={styles.tabSection}>
-            <Text style={styles.sectionTitle}>Connected Hardware & IoT Nodes</Text>
-            {sensorsAssigned.length === 0 ? (
-              <Text style={styles.emptyText}>No registered devices or hardware assigned.</Text>
+        {/* LOGS SUB-TAB */}
+        {activeSubTab === 'Logs' && (
+          <View style={styles.usersSection}>
+            <View style={styles.usersHeaderRow}>
+              <Text style={styles.registeredCountText}>Sensor Telemetry Logs</Text>
+              <TouchableOpacity style={styles.addUserBtn} onPress={fetchSoilLogsFromSupabase}>
+                <Ionicons name="refresh" size={12} color="#ffffff" style={{ marginRight: 4 }} />
+                <Text style={styles.addUserBtnText}>Refresh Logs</Text>
+              </TouchableOpacity>
+            </View>
+
+            {loadingLogs ? (
+              <ActivityIndicator size="large" color="#10b981" style={{ marginVertical: 30 }} />
+            ) : supabaseLogs.length === 0 ? (
+              <Text style={styles.emptyText}>No sensor telemetry logs recorded yet in soil_records.</Text>
             ) : (
-              sensorsAssigned.map((plot, idx) => (
-                <View key={plot.sensor_id || idx} style={styles.deviceCard}>
-                  <View style={styles.deviceCardHeader}>
-                    <View style={styles.deviceIconCircle}>
-                      <Ionicons name="hardware-chip-outline" size={20} color="#0f172a" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.deviceName}>
-                        Node ID: {plot.sensor_id}
-                      </Text>
-                      <Text style={styles.deviceSub}>Assigned Plot: {plot.name}</Text>
-                    </View>
-                    <View style={[styles.statusBadge, { backgroundColor: plot.status === 'Online' ? '#dcfce7' : '#f1f5f9' }]}>
-                      <Text style={[styles.statusBadgeText, { color: plot.status === 'Online' ? '#15803d' : '#64748b' }]}>
-                        {plot.status === 'Online' ? 'Online' : 'Offline'}
-                      </Text>
+              supabaseLogs.map((log, index) => {
+                const logTime = log.timestamp ? new Date(log.timestamp).toLocaleString() : 'Recent';
+                return (
+                  <View key={log.id || index} style={styles.userCard}>
+                    <View style={styles.userCardHeader}>
+                      <View style={[styles.userAvatarCircle, { backgroundColor: '#ecfdf5' }]}>
+                        <Ionicons name="pulse" size={18} color="#10b981" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.userNameRow}>
+                          <Text style={styles.userName}>Sensor: {log.sensor_id || 'N/A'}</Text>
+                          <View style={[styles.roleBadge, { backgroundColor: '#f1f5f9' }]}>
+                            <Text style={[styles.roleBadgeText, { color: '#475569' }]}>Plot ID: {log.plot_id || 'Unassigned'}</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.userEmail}>Time: {logTime}</Text>
+
+                        <View style={styles.plotTagRow}>
+                          <View style={styles.plotTag}><Text style={styles.plotTagText}>pH: {log.ph_level ?? log.ph ?? 'N/A'}</Text></View>
+                          <View style={styles.plotTag}><Text style={styles.plotTagText}>Moisture: {log.soil_moisture ?? log.moisture ?? 'N/A'}%</Text></View>
+                          <View style={styles.plotTag}><Text style={styles.plotTagText}>Temp: {log.soil_temperature ?? log.temp ?? 'N/A'}°C</Text></View>
+                          <View style={styles.plotTag}><Text style={styles.plotTagText}>Battery: {log.battery_percentage ?? log.battery ?? 'N/A'}%</Text></View>
+                        </View>
+                      </View>
                     </View>
                   </View>
-
-                  <View style={styles.deviceMetaRow}>
-                    <Text style={styles.deviceMetaText}>Type: LoRa Soil Node</Text>
-                  </View>
-
-                  <TouchableOpacity
-                    style={styles.restartDeviceBtn}
-                    onPress={() => {
-                      Alert.alert('Restart Node', `Send restart command to node ${plot.sensor_id}?`, [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Restart', onPress: () => onRestartDevice?.(plot.sensor_id) }
-                      ]);
-                    }}
-                  >
-                    <Text style={styles.restartDeviceText}>
-                      <Ionicons name="refresh-outline" size={14} /> Restart Sensor Node
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ))
+                );
+              })
             )}
           </View>
         )}
@@ -619,7 +709,6 @@ export default function AdminScreen({
                 onChangeText={(txt) => setFormData({ ...formData, phone: txt })}
               />
 
-              {/* Existing Plots Assignment Checklist - Visible ONLY when editing */}
               {editingUser && (
                 <>
                   <Text style={styles.modalSectionLabel}>Assign Existing Plots:</Text>
@@ -676,14 +765,12 @@ const styles = StyleSheet.create({
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   brandGroup: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   shieldBadge: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#1f4233', justifyContent: 'center', alignItems: 'center' },
-  shieldIcon: { fontSize: 20 },
   headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#ffffff' },
   headerSubtitle: { fontSize: 12, color: '#a7f3d0' },
   actionRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   appSwitchBtn: { backgroundColor: '#1f4233', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
   appSwitchText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
   logoutBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#ef444422', justifyContent: 'center', alignItems: 'center' },
-  logoutIcon: { fontSize: 16 },
 
   subTabRow: { flexDirection: 'row', justifyContent: 'space-around', borderBottomWidth: 1, borderBottomColor: '#1f4233', marginTop: 5 },
   subTabItem: { paddingVertical: 10, paddingHorizontal: 12 },
@@ -694,7 +781,7 @@ const styles = StyleSheet.create({
   usersSection: { padding: 16 },
   usersHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   registeredCountText: { fontSize: 14, fontWeight: '600', color: '#334155' },
-  addUserBtn: { backgroundColor: '#10b981', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 },
+  addUserBtn: { backgroundColor: '#10b981', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, flexDirection: 'row', alignItems: 'center' },
   addUserBtnText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold' },
 
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', borderRadius: 12, paddingHorizontal: 12, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 16, height: 42 },
@@ -738,7 +825,10 @@ const styles = StyleSheet.create({
   cardSubtext: { fontSize: 10, color: '#94a3b8', marginTop: 2 },
 
   sectionCard: { backgroundColor: '#ffffff', marginHorizontal: 16, marginTop: 16, borderRadius: 16, padding: 16, elevation: 2 },
-  sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#0f172a', marginBottom: 12 },
+  sectionCardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  refreshOverviewBtn: { flexDirection: 'row', alignItems: 'center' },
+  refreshOverviewText: { fontSize: 13, color: '#15803d', fontWeight: '700' },
+  sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#0f172a' },
   emptyText: { color: '#94a3b8', fontStyle: 'italic', fontSize: 12 },
   networkRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   networkInfo: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -757,29 +847,12 @@ const styles = StyleSheet.create({
   phText: { fontSize: 13, fontWeight: 'bold' },
   deviceStatusText: { fontSize: 11, color: '#94a3b8' },
 
-  tabSection: { padding: 16 },
-  deviceCard: { backgroundColor: '#ffffff', borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' },
-  deviceCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  deviceIconCircle: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#e2e8f0', justifyContent: 'center', alignItems: 'center' },
-  deviceName: { fontSize: 14, fontWeight: 'bold', color: '#0f172a' },
-  deviceSub: { fontSize: 12, color: '#64748b' },
-  deviceMetaRow: { marginTop: 10, flexDirection: 'row', justifyContent: 'space-between' },
-  deviceMetaText: { fontSize: 11, color: '#64748b' },
-  restartDeviceBtn: { marginTop: 12, backgroundColor: '#f1f5f9', paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
-  restartDeviceText: { fontSize: 12, fontWeight: '600', color: '#334155' },
-
-  logCard: { backgroundColor: '#ffffff', borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: '#f1f5f9' },
-  logHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  logType: { fontSize: 11, fontWeight: 'bold', color: '#3b82f6' },
-  logTime: { fontSize: 10, color: '#94a3b8' },
-  logMessage: { fontSize: 13, color: '#1e293b' },
-
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   modalContent: { backgroundColor: '#ffffff', borderRadius: 16, padding: 20, width: '100%', maxWidth: 400, maxHeight: '85%' },
   modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a', marginBottom: 12 },
   modalSectionLabel: { fontSize: 13, fontWeight: 'bold', color: '#334155', marginTop: 8, marginBottom: 6 },
   modalInput: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, marginBottom: 10, color: '#0f172a' },
-  
+ 
   plotChecklist: { marginBottom: 12, maxHeight: 150 },
   plotCheckItem: { flexDirection: 'row', alignItems: 'center', padding: 8, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, marginBottom: 6, backgroundColor: '#f8fafc' },
   plotCheckItemSelected: { backgroundColor: '#ecfdf5', borderColor: '#10b981' },

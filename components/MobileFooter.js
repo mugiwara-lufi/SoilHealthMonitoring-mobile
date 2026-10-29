@@ -1,3 +1,5 @@
+// MobileFooter.js
+
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -8,11 +10,6 @@ export default function MobileFooter({ currentTab = 'Farm', onSelectTab }) {
       id: 'Farm',
       label: 'Farm',
       iconName: 'home',
-    },
-    {
-      id: 'Map',
-      label: 'Map',
-      iconName: 'map',
     },
     {
       id: 'History',

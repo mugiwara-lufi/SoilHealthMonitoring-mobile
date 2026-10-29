@@ -1,9 +1,10 @@
+// App.js
+
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
+import { View, StyleSheet, Alert } from 'react-native';
 
 import ExploreScreen from './screens/ExploreScreen';
 import AdminScreen from './screens/AdminScreen';
-import MapScreen from './screens/MapScreen';
 import HistoryScreen from './screens/HistoryScreen';
 import MonitorScreen from './screens/MonitorScreen';
 import LoginScreen from './screens/LoginScreen';
@@ -11,14 +12,14 @@ import ProfileScreen from './screens/ProfileScreen';
 import AdminRegistrationScreen from './screens/AdminRegistrationScreen';
 import RegistrationScreen from './screens/RegistrationScreen';
 
-const BASE_URL = 'http://10.226.61.28:8000/api';
+const BASE_URL = 'http://10.231.126.28:8000/api';
 const AUTH_URL = `${BASE_URL}/api-token-auth/`;
-const REGISTER_URL = `${BASE_URL}/register/`; // Matches Django backend register_user endpoint
+const REGISTER_URL = `${BASE_URL}/register/`;
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
-  const [currentScreen, setCurrentScreen] = useState('Login'); // Default to Login screen when unauthenticated
+  const [currentScreen, setCurrentScreen] = useState('Login');
   const [plots, setPlots] = useState([]);
   const [selectedPlot, setSelectedPlot] = useState(null);
   const [usersList, setUsersList] = useState([]);
@@ -129,7 +130,7 @@ export default function App() {
         return (
           formattedData.find(
             (plot) => plot.id === String(previousPlot.id)
-          ) || null
+          ) || previousPlot
         );
       });
     } catch (error) {
@@ -150,6 +151,24 @@ export default function App() {
       }
     }
   }, [token, user]);
+
+  // -------------------- UPDATE PLOT SENSOR LOCALLY --------------------
+  const handleUpdatePlotSensor = (plotId, newSensorId) => {
+    const updatedPlotIdStr = String(plotId);
+
+    setPlots((prevPlots) =>
+      prevPlots.map((p) =>
+        p.id === updatedPlotIdStr ? { ...p, sensor_id: newSensorId } : p
+      )
+    );
+
+    setSelectedPlot((prevPlot) => {
+      if (prevPlot && prevPlot.id === updatedPlotIdStr) {
+        return { ...prevPlot, sensor_id: newSensorId };
+      }
+      return prevPlot;
+    });
+  };
 
   // -------------------- REGISTRATION --------------------
   const handleRegister = async (formData) => {
@@ -264,8 +283,6 @@ export default function App() {
       setCurrentScreen(isAdmin ? 'Admin' : 'Explore');
     } else if (tabId === 'Settings') {
       setCurrentScreen('Profile');
-    } else if (tabId === 'Map') {
-      setCurrentScreen('Map');
     } else if (tabId === 'History') {
       setCurrentScreen('History');
     }
@@ -360,8 +377,7 @@ export default function App() {
 
   // -------------------- ADD SENSOR --------------------
   const handleAddSensor = async (plotId) => {
-    const generatedSensorId =
-      `SN-${Math.floor(1000 + Math.random() * 9000)}`;
+    const generatedSensorId = `SN-${Math.floor(1000 + Math.random() * 9000)}`;
 
     try {
       const response = await fetch(`${BASE_URL}/plots/${plotId}/`, {
@@ -375,6 +391,7 @@ export default function App() {
       });
 
       if (response.ok) {
+        handleUpdatePlotSensor(plotId, generatedSensorId);
         await fetchPlots(token);
         Alert.alert('Success', `Sensor ${generatedSensorId} assigned.`);
       } else {
@@ -400,8 +417,8 @@ export default function App() {
       });
 
       if (response.ok) {
+        handleUpdatePlotSensor(plotId, null);
         await fetchPlots(token);
-        Alert.alert('Success', 'Sensor removed from plot.');
       } else {
         Alert.alert('Error', 'Could not remove sensor.');
       }
@@ -480,7 +497,7 @@ export default function App() {
     }
   };
 
-  // -------------------- UNAUTHENTICATED SCREENS (LOGIN / REGISTRATION) --------------------
+  // -------------------- UNAUTHENTICATED SCREENS --------------------
   if (!user) {
     if (currentScreen === 'AdminRegister') {
       return (
@@ -523,6 +540,7 @@ export default function App() {
           onSelectPlot={handleSelectPlot}
           onAssignPlots={handleAssignPlots}
           onOpenProfile={() => setCurrentScreen('Profile')}
+          onRefreshData={() => fetchPlots(token)}
           currentTab={getCurrentTabName()}
           onSelectTab={handleSelectTab}
           onLogout={handleLogout}
@@ -548,13 +566,6 @@ export default function App() {
     <View style={{ flex: 1 }}>
       {currentScreen === 'Explore' || currentScreen === 'Admin' ? (
         renderDashboardScreen()
-      ) : currentScreen === 'Map' ? (
-        <MapScreen
-          plots={plots}
-          onSelectPlot={handleSelectPlot}
-          currentTab={getCurrentTabName()}
-          onSelectTab={handleSelectTab}
-        />
       ) : currentScreen === 'History' ? (
         <HistoryScreen
           currentTab={getCurrentTabName()}
@@ -563,11 +574,21 @@ export default function App() {
       ) : currentScreen === 'Monitor' ? (
         <MonitorScreen
           plotData={selectedPlot}
+          token={token}
           onAddSensor={handleAddSensor}
           onRemoveSensor={handleRemoveSensor}
-          onRefreshData={fetchPlots}
+          onDisconnectSensor={handleRemoveSensor}
+          onUpdatePlotSensor={handleUpdatePlotSensor}
+          onRefreshData={() => fetchPlots(token)}
           currentTab={getCurrentTabName()}
           onSelectTab={handleSelectTab}
+          onBack={() =>
+            setCurrentScreen(
+              user?.role?.toLowerCase() === 'admin' || user?.is_staff
+                ? 'Admin'
+                : 'Explore'
+            )
+          }
         />
       ) : (
         <ProfileScreen
@@ -584,38 +605,8 @@ export default function App() {
           onSelectTab={handleSelectTab}
         />
       )}
-
-      {currentScreen === 'Monitor' && (
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() =>
-            setCurrentScreen(
-              user?.role?.toLowerCase() === 'admin' || user?.is_staff
-                ? 'Admin'
-                : 'Explore'
-            )
-          }
-        >
-          <Text style={styles.backText}>Back to Overview</Text>
-        </TouchableOpacity>
-      )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  backButton: {
-    position: 'absolute',
-    bottom: 90,
-    alignSelf: 'center',
-    backgroundColor: '#1e293b',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 25,
-    elevation: 5,
-  },
-  backText: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-});
+const styles = StyleSheet.create({});
