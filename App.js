@@ -11,7 +11,7 @@ import ProfileScreen from './screens/ProfileScreen';
 import AdminRegistrationScreen from './screens/AdminRegistrationScreen';
 import RegistrationScreen from './screens/RegistrationScreen';
 
-const BASE_URL = 'http://10.175.94.28:8000/api';
+const BASE_URL = 'http://10.226.61.28:8000/api';
 const AUTH_URL = `${BASE_URL}/api-token-auth/`;
 const REGISTER_URL = `${BASE_URL}/register/`; // Matches Django backend register_user endpoint
 
