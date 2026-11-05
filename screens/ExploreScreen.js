@@ -10,6 +10,7 @@ const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_cyQgbi_v02dkhswabEBWoQ_3exGPlaK';
 
 export default function ExploreScreen({
+  user,
   plots,
   users,
   currentAdminId,
@@ -34,10 +35,10 @@ export default function ExploreScreen({
   const safeUsers = users || [];
   const loggedInAdmin = safeUsers.find(
     (u) =>
-      (currentAdminId && u.id === currentAdminId) ||
+      (currentAdminId && String(u.id) === String(currentAdminId)) ||
       (currentAdminUsername && u.username === currentAdminUsername)
   );
-  const adminEmail = loggedInAdmin?.email || '';
+  const adminEmail = loggedInAdmin?.email || user?.email || '';
 
   useEffect(() => {
     fetchLatestSoilTelemetry();
@@ -83,17 +84,24 @@ export default function ExploreScreen({
     }
   };
 
-  // Filter visible plots based on user ownership or shared email inheritance
+  // Filter visible plots based on user role and explicit assignments
+  const activeUser = user || { id: currentAdminId, username: currentAdminUsername, email: adminEmail };
+  const isAdmin = activeUser?.role?.toUpperCase() === 'ADMIN' || activeUser?.is_staff;
+  const activeUserIdStr = activeUser?.id ? String(activeUser.id) : null;
+  const activeUsername = activeUser?.username || currentAdminUsername;
+
   const visiblePlots = (plots || []).filter(plot => {
-    const isOwnerPlot = 
-      plot.farmer === currentAdminId ||
-      plot.farmer_username === currentAdminUsername ||
-      plot.owner_id === currentAdminId ||
-      plot.owner_username === currentAdminUsername;
+    if (isAdmin) {
+      // Admins/Owners see all plots
+      return true;
+    } else {
+      // Farmers ONLY see plots explicitly assigned to their user ID or username
+      const isAssignedToFarmer =
+        (activeUserIdStr && plot.farmer && String(plot.farmer) === activeUserIdStr) ||
+        (activeUsername && plot.farmer_username === activeUsername);
 
-    const matchesEmail = adminEmail && plot.owner_email && plot.owner_email === adminEmail;
-
-    return isOwnerPlot || matchesEmail || (!plot.farmer && !plot.owner_email);
+      return isAssignedToFarmer;
+    }
   });
 
   // Comprehensive warning/status evaluator using live telemetry

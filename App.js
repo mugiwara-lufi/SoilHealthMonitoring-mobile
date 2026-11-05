@@ -12,7 +12,7 @@ import ProfileScreen from './screens/ProfileScreen';
 import AdminRegistrationScreen from './screens/AdminRegistrationScreen';
 import RegistrationScreen from './screens/RegistrationScreen';
 
-const BASE_URL = 'http://10.231.126.28:8000/api';
+const BASE_URL = 'http://10.103.176.28:8000/api';
 const AUTH_URL = `${BASE_URL}/api-token-auth/`;
 const REGISTER_URL = `${BASE_URL}/register/`;
 
@@ -80,8 +80,13 @@ export default function App() {
         return {
           id: String(plot.id),
           name: plot.name || '',
-          crop: plot.crop_type || '',
+          crop: plot.crop_type || plot.crop || '',
+          crop_type: plot.crop_type || plot.crop || '',
+          farmer: plot.farmer ? String(plot.farmer) : (plot.farmer_id ? String(plot.farmer_id) : null),
           farmer_username: plot.farmer_username || 'Unassigned',
+          owner_id: plot.owner_id ? String(plot.owner_id) : (plot.owner ? String(plot.owner) : null),
+          owner_username: plot.owner_username || '',
+          owner_email: plot.owner_email || '',
           status:
             plot.sensor_id &&
             plot.sensor_id !== 'N/A' &&
@@ -234,8 +239,13 @@ export default function App() {
       const authUser = {
         id: data.user_id || data.id || null,
         username: loggedUsername,
-        name: data.name || loggedUsername,
+        first_name: data.first_name || '',
+        last_name: data.last_name || '',
+        name: (data.first_name || data.last_name)
+          ? `${data.first_name || ''} ${data.last_name || ''}`.trim()
+          : loggedUsername,
         email: data.email || `${loggedUsername}@jjmap.ph`,
+        phone: data.phone || '',
         role: isAdmin ? 'ADMIN' : 'FARMER',
         is_staff: isAdmin,
         is_active: true,
@@ -550,6 +560,10 @@ export default function App() {
 
     return (
       <ExploreScreen
+        user={user}
+        currentAdminId={currentAdminId}
+        currentAdminUsername={currentAdminUsername}
+        users={usersList}
         plots={plots}
         onAddPlot={handleAddPlot}
         onDeletePlot={handleDeletePlot}
@@ -593,7 +607,12 @@ export default function App() {
       ) : (
         <ProfileScreen
           user={user}
+          token={token}
+          plots={plots}
           onLogout={handleLogout}
+          onUpdateUser={(userId, updatedData) => {
+            setUser((prev) => (prev ? { ...prev, ...updatedData } : prev));
+          }}
           onBack={() =>
             setCurrentScreen(
               user?.role?.toLowerCase() === 'admin' || user?.is_staff

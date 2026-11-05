@@ -21,7 +21,7 @@ import { Buffer } from 'buffer';
 import MobileFooter from '../components/MobileFooter';
 
 const screenWidth = Dimensions.get('window').width - 30;
-const API_BASE_URL = 'http://10.231.126.28:8000';
+const API_BASE_URL = 'http://10.103.176.28:8000';
 
 // Supabase Direct Credentials
 const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
@@ -147,7 +147,6 @@ export default function MonitorScreen({
 
   const hasSensor = Boolean(activeSensorId && activeSensorId !== "N/A");
 
-  // Helper to update Supabase soil_api_farmplot directly
   const updateSupabaseFarmPlotSensor = async (plotId, newSensorId) => {
     if (!plotId) return;
     try {
@@ -194,7 +193,7 @@ export default function MonitorScreen({
     if (hasSensor) {
       Alert.alert(
         "Disconnect Sensor",
-        `Are you sure you want to disconnect sensor "${activeSensorId}" from ${currentPlot}?`,
+        `Are you sure you want to disconnect sensor "${activeSensorId}" from ${currentPlot}? This will reset the device's Wi-Fi settings.`,
         [
           { text: "Cancel", style: "cancel" },
           {
@@ -209,6 +208,26 @@ export default function MonitorScreen({
 
               if (prevSensorId) {
                 await updateSupabasePlotId(prevSensorId, null);
+
+                // Issue Wi-Fi reset command to the IoT hardware
+                try {
+                  await fetch(`${SUPABASE_URL}/rest/v1/device_commands`, {
+                    method: 'POST',
+                    headers: {
+                      'apikey': SUPABASE_KEY,
+                      'Authorization': `Bearer ${SUPABASE_KEY}`,
+                      'Content-Type': 'application/json',
+                      'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({
+                      sensor_id: prevSensorId,
+                      command: 'RESET_WIFI',
+                      status: 'PENDING'
+                    })
+                  });
+                } catch (cmdErr) {
+                  console.log("Error sending Wi-Fi reset command to Supabase:", cmdErr);
+                }
               }
 
               if (plotId) {
@@ -238,7 +257,7 @@ export default function MonitorScreen({
               if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, null);
               if (onRefreshData) onRefreshData();
 
-              Alert.alert("Disconnected", `Sensor ${prevSensorId} removed from ${currentPlot}.`);
+              Alert.alert("Disconnected", `Sensor ${prevSensorId} unlinked. Wi-Fi reset command transmitted.`);
             }
           }
         ]
@@ -250,7 +269,6 @@ export default function MonitorScreen({
     setShowSensorModal(true);
 
     try {
-      // 1. Fetch already taken sensor IDs from farm plots
       const plotsRes = await fetch(`${SUPABASE_URL}/rest/v1/soil_api_farmplot?select=sensor_id`, {
         method: 'GET',
         headers: {
@@ -266,7 +284,6 @@ export default function MonitorScreen({
           .filter(sId => sId && sId !== 'N/A')
       );
 
-      // 2. Fetch raw sensor telemetry records
       const response = await fetch(
         `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=100`,
         {
@@ -285,7 +302,6 @@ export default function MonitorScreen({
         const uniqueSensorsMap = {};
         records.forEach(rec => {
           const sId = rec.sensor_id || "SENSOR_001";
-          // Exclude sensors that are already assigned to a plot
           if (!takenSensorIds.has(sId) && !uniqueSensorsMap[sId]) {
             uniqueSensorsMap[sId] = {
               sensor_id: sId,
@@ -311,13 +327,9 @@ export default function MonitorScreen({
 
     const plotId = plotData?.id;
 
-    // 1. Update Supabase soil_records table
     await updateSupabasePlotId(sensorId, plotId);
-
-    // 2. Update Supabase soil_api_farmplot table directly
     await updateSupabaseFarmPlotSensor(plotId, sensorId);
 
-    // 3. Update Django REST backend with token headers
     try {
       if (plotId) {
         const headers = {
@@ -342,7 +354,6 @@ export default function MonitorScreen({
     Alert.alert("Sensor Linked", `Successfully linked ${sensorId} to ${currentPlot}`);
   };
 
-  // --- BLE Wi-Fi Provisioning Handlers ---
   const startBleScan = () => {
     setScannedDevices([]);
     setShowWifiModal(true);
@@ -436,30 +447,88 @@ export default function MonitorScreen({
     if (ph === null || ph === undefined) return { label: 'Unknown', color: '#64748b' };
     const num = parseFloat(ph);
     if (num < 5.5) return { label: 'Highly Acidic', color: '#ef4444' };
-    if (num <= 6.5) return { label: 'Mod. Acidic', color: '#f97316' };
-    if (num <= 7.5) return { label: 'OPTIMAL', color: '#22c55e' };
-    return { label: 'Alkaline', color: '#3b82f6' };
+    if (num <= 6.5) return { label: 'Mod. Acidic', color: '#f59e0b' };
+    if (num <= 7.5) return { label: 'Optimal', color: '#2563eb' };
+    return { label: 'Alkaline', color: '#f59e0b' };
+  };
+
+  const getMoistureStatus = (val) => {
+    if (val === null || val === undefined) return { label: 'Unknown', color: '#64748b' };
+    const num = parseFloat(val);
+    if (num < 20) return { label: 'Critical Low', color: '#ef4444' };
+    if (num < 40) return { label: 'Low Moisture', color: '#f59e0b' };
+    if (num <= 80) return { label: 'Optimal', color: '#2563eb' };
+    return { label: 'High Moisture', color: '#f59e0b' };
   };
 
   const getEcStatus = (ec) => {
     if (ec === null || ec === undefined) return { label: 'Unknown', color: '#64748b' };
     const num = parseFloat(ec);
-    if (num < 200) return { label: 'Low Nutrients', color: '#f97316' };
-    if (num <= 1200) return { label: 'OPTIMAL', color: '#22c55e' };
+    if (num < 200) return { label: 'Critical Low', color: '#ef4444' };
+    if (num < 500) return { label: 'Low Nutrients', color: '#f59e0b' };
+    if (num <= 1500) return { label: 'Optimal', color: '#2563eb' };
     return { label: 'High Salinity', color: '#ef4444' };
   };
 
-  const getNpkStatus = (n, p, k) => {
-    if (n === null && p === null && k === null) return { label: 'Unknown', color: '#64748b' };
-    if ((n !== null && n < 30) || (p !== null && p < 20) || (k !== null && k < 30)) {
-      return { label: 'Needs Attention', color: '#ef4444' };
+  const getTempStatus = (val) => {
+    if (val === null || val === undefined) return { label: 'Unknown', color: '#64748b' };
+    const num = parseFloat(val);
+    if (num < 10) return { label: 'Critical Low', color: '#ef4444' };
+    if (num < 18) return { label: 'Low Temp', color: '#f59e0b' };
+    if (num <= 32) return { label: 'Optimal', color: '#2563eb' };
+    if (num <= 38) return { label: 'High Temp', color: '#f59e0b' };
+    return { label: 'Critical High', color: '#ef4444' };
+  };
+
+  const getNStatus = (val) => {
+    if (val === null || val === undefined) return { label: 'Unknown', color: '#64748b' };
+    const num = parseFloat(val);
+    if (num < 20) return { label: 'Critical Low', color: '#ef4444' };
+    if (num < 50) return { label: 'Low', color: '#f59e0b' };
+    if (num <= 200) return { label: 'Optimal', color: '#2563eb' };
+    return { label: 'High', color: '#f59e0b' };
+  };
+
+  const getPStatus = (val) => {
+    if (val === null || val === undefined) return { label: 'Unknown', color: '#64748b' };
+    const num = parseFloat(val);
+    if (num < 10) return { label: 'Critical Low', color: '#ef4444' };
+    if (num < 25) return { label: 'Low', color: '#f59e0b' };
+    if (num <= 100) return { label: 'Optimal', color: '#2563eb' };
+    return { label: 'High', color: '#f59e0b' };
+  };
+
+  const getKStatus = (val) => {
+    if (val === null || val === undefined) return { label: 'Unknown', color: '#64748b' };
+    const num = parseFloat(val);
+    if (num < 20) return { label: 'Critical Low', color: '#ef4444' };
+    if (num < 50) return { label: 'Low', color: '#f59e0b' };
+    if (num <= 250) return { label: 'Optimal', color: '#2563eb' };
+    return { label: 'High', color: '#f59e0b' };
+  };
+
+  const getNpkOverallStatus = (nStat, pStat, kStat) => {
+    if (nStat.color === '#ef4444' || pStat.color === '#ef4444' || kStat.color === '#ef4444') {
+      return { label: 'Critical Deficit', color: '#ef4444' };
     }
-    return { label: 'Optimal Range', color: '#22c55e' };
+    if (nStat.color === '#f59e0b' || pStat.color === '#f59e0b' || kStat.color === '#f59e0b') {
+      return { label: 'Needs Attention', color: '#f59e0b' };
+    }
+    if (nStat.color === '#2563eb' && pStat.color === '#2563eb' && kStat.color === '#2563eb') {
+      return { label: 'Optimal Range', color: '#2563eb' };
+    }
+    return { label: 'Unknown', color: '#64748b' };
   };
 
   const phStatus = getPhStatus(sensors.ph);
+  const moistureStatus = getMoistureStatus(sensors.moisture);
   const ecStatus = getEcStatus(sensors.ec);
-  const npkStatus = getNpkStatus(sensors.nitrogen, sensors.phosphorus, sensors.potassium);
+  const tempStatus = getTempStatus(sensors.temp);
+
+  const nStatus = getNStatus(sensors.nitrogen);
+  const pStatus = getPStatus(sensors.phosphorus);
+  const kStatus = getKStatus(sensors.potassium);
+  const npkStatus = getNpkOverallStatus(nStatus, pStatus, kStatus);
 
   const limeSacksNeeded = Math.max(1, Math.round(parsedHectares * 1.5));
   const ureaSacksNeeded = Math.max(1, Math.round(parsedHectares * 0.8));
@@ -478,6 +547,7 @@ export default function MonitorScreen({
 
         <View style={styles.gridContainer}>
           <View style={styles.gridRow}>
+            {/* Soil pH Card */}
             <View style={styles.metricCard}>
               <View style={[styles.iconContainer, { backgroundColor: '#fee2e2' }]}>
                 <Ionicons name="flask" size={22} color="#ef4444" />
@@ -491,6 +561,7 @@ export default function MonitorScreen({
               </Text>
             </View>
 
+            {/* Moisture Card */}
             <View style={styles.metricCard}>
               <View style={[styles.iconContainer, { backgroundColor: '#dbeafe' }]}>
                 <Ionicons name="water" size={24} color="#3b82f6" />
@@ -499,9 +570,12 @@ export default function MonitorScreen({
               <Text style={styles.cardValue}>
                 {sensors.moisture !== null ? `${Math.round(sensors.moisture)}%` : 'N/A'}
               </Text>
-              <Text style={[styles.cardStatus, { color: '#2563eb' }]}>OPTIMAL</Text>
+              <Text style={[styles.cardStatus, { color: moistureStatus.color }]}>
+                {moistureStatus.label}
+              </Text>
             </View>
 
+            {/* EC Card */}
             <View style={styles.metricCard}>
               <View style={[styles.iconContainer, { backgroundColor: '#e0e7ff' }]}>
                 <Ionicons name="flash" size={22} color="#fff764" />
@@ -510,11 +584,14 @@ export default function MonitorScreen({
               <Text style={styles.cardValue}>
                 {sensors.ec !== null ? `${Math.round(sensors.ec)}` : 'N/A'}
               </Text>
-              <Text style={[styles.cardStatus, { color: ecStatus.color }]}>{ecStatus.label}</Text>
+              <Text style={[styles.cardStatus, { color: ecStatus.color }]}>
+                {ecStatus.label}
+              </Text>
             </View>
           </View>
 
           <View style={styles.gridRow}>
+            {/* Temperature Card */}
             <View style={[styles.metricCard, styles.largeRowCard]}>
               <View style={[styles.iconContainer, { backgroundColor: '#ffedd5' }]}>
                 <Ionicons name="thermometer" size={24} color="#f97316" />
@@ -523,9 +600,12 @@ export default function MonitorScreen({
               <Text style={styles.cardValueBig}>
                 {sensors.temp !== null ? `${Number(sensors.temp).toFixed(1)}°C` : 'N/A'}
               </Text>
-              <Text style={[styles.cardStatus, { color: '#ef4444' }]}>Normal</Text>
+              <Text style={[styles.cardStatus, { color: tempStatus.color }]}>
+                {tempStatus.label}
+              </Text>
             </View>
 
+            {/* NPK Card */}
             <View style={[styles.metricCard, styles.largeRowCard, styles.npkCard]}>
               <View style={styles.npkHeader}>
                 <View style={[styles.iconContainer, { backgroundColor: '#dcfce7', marginBottom: 0 }]}>
@@ -536,21 +616,38 @@ export default function MonitorScreen({
 
               <View style={styles.npkMetricRow}>
                 <Text style={styles.npkLabel}>N (Nitrogen):</Text>
-                <Text style={styles.npkValue}>
-                  {sensors.nitrogen !== null ? Math.round(sensors.nitrogen) : 'N/A'}
-                </Text>
+                <View style={styles.npkValueGroup}>
+                  <Text style={styles.npkValue}>
+                    {sensors.nitrogen !== null ? Math.round(sensors.nitrogen) : 'N/A'}
+                  </Text>
+                  <Text style={[styles.inlineStatusText, { color: nStatus.color }]}>
+                    {nStatus.label}
+                  </Text>
+                </View>
               </View>
+
               <View style={styles.npkMetricRow}>
                 <Text style={styles.npkLabel}>P (Phosphorus):</Text>
-                <Text style={styles.npkValue}>
-                  {sensors.phosphorus !== null ? Math.round(sensors.phosphorus) : 'N/A'}
-                </Text>
+                <View style={styles.npkValueGroup}>
+                  <Text style={styles.npkValue}>
+                    {sensors.phosphorus !== null ? Math.round(sensors.phosphorus) : 'N/A'}
+                  </Text>
+                  <Text style={[styles.inlineStatusText, { color: pStatus.color }]}>
+                    {pStatus.label}
+                  </Text>
+                </View>
               </View>
+
               <View style={styles.npkMetricRow}>
                 <Text style={styles.npkLabel}>K (Potassium):</Text>
-                <Text style={styles.npkValue}>
-                  {sensors.potassium !== null ? Math.round(sensors.potassium) : 'N/A'}
-                </Text>
+                <View style={styles.npkValueGroup}>
+                  <Text style={styles.npkValue}>
+                    {sensors.potassium !== null ? Math.round(sensors.potassium) : 'N/A'}
+                  </Text>
+                  <Text style={[styles.inlineStatusText, { color: kStatus.color }]}>
+                    {kStatus.label}
+                  </Text>
+                </View>
               </View>
 
               <Text style={[styles.cardStatus, { color: npkStatus.color, marginTop: 4 }]}>
@@ -613,7 +710,7 @@ export default function MonitorScreen({
                   <Text style={styles.legendText}>Mod. Acidic (5.5-6.5)</Text>
                 </View>
                 <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: '#22c55e' }]} />
+                  <View style={[styles.legendDot, { backgroundColor: '#2563eb' }]} />
                   <Text style={styles.legendText}>OPTIMAL (6.5-7.5)</Text>
                 </View>
                 <View style={styles.legendItem}>
@@ -1037,9 +1134,11 @@ const styles = StyleSheet.create({
   npkCard: { flex: 1.25 },
   npkHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   cardLabelNPK: { fontSize: 13, color: '#0f172a', fontWeight: 'bold', marginLeft: 8 },
-  npkMetricRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 2 },
+  npkMetricRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginVertical: 2 },
   npkLabel: { fontSize: 11, color: '#64748b', fontWeight: '500' },
+  npkValueGroup: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   npkValue: { fontSize: 12, color: '#0f172a', fontWeight: 'bold' },
+  inlineStatusText: { fontSize: 10, fontWeight: '700' },
 
   optimizeButton: {
     flexDirection: 'row',

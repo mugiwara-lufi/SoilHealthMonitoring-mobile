@@ -36,6 +36,7 @@ export default function AdminScreen({
   onAddUser,
   onUpdateUser,
   onDeleteUser,
+  onAssignPlots,
   onRefreshData
 }) {
   const [activeSubTab, setActiveSubTab] = useState('Overview');
@@ -51,7 +52,7 @@ export default function AdminScreen({
 
   const loggedInAdmin = safeUsers.find(
     (u) =>
-      (currentAdminId && u.id === currentAdminId) ||
+      (currentAdminId && String(u.id) === String(currentAdminId)) ||
       (currentAdminUsername && u.username === currentAdminUsername)
   );
 
@@ -81,7 +82,6 @@ export default function AdminScreen({
 
   const fetchPlotLatestReadings = async () => {
     try {
-      // Fetch latest soil records to match plots by sensor_id or plot_id
       const response = await fetch(
         `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=100`,
         {
@@ -147,23 +147,23 @@ export default function AdminScreen({
   };
 
   const adminVisibleUsers = safeUsers.filter((u) => {
-    const isSelf = (currentAdminId && u.id === currentAdminId) ||
+    const isSelf = (currentAdminId && String(u.id) === String(currentAdminId)) ||
                    (currentAdminUsername && u.username === currentAdminUsername);
-    const isCreatedByThisAdmin = u.createdByAdminId === currentAdminId ||
+    const isCreatedByThisAdmin = String(u.createdByAdminId) === String(currentAdminId) ||
                                  u.createdByAdminUsername === currentAdminUsername ||
-                                 u.owner_id === currentAdminId ||
+                                 String(u.owner_id) === String(currentAdminId) ||
                                  (u.owner_username && u.owner_username === currentAdminUsername);
     return isSelf || isCreatedByThisAdmin;
   });
 
   const adminVisiblePlots = safePlots.filter((p) => {
-    const isOwnerPlot = p.farmer === currentAdminId ||
+    const isOwnerPlot = String(p.farmer) === String(currentAdminId) ||
                         p.farmer_username === currentAdminUsername ||
-                        p.owner_id === currentAdminId ||
+                        String(p.owner_id) === String(currentAdminId) ||
                         (p.owner_username && p.owner_username === currentAdminUsername);
    
     const belongsToVisibleUser = adminVisibleUsers.some(
-      (u) => u.id === p.farmer || u.username === p.farmer_username
+      (u) => (p.farmer && String(u.id) === String(p.farmer)) || u.username === p.farmer_username
     );
 
     return isOwnerPlot || belongsToVisibleUser;
@@ -212,8 +212,8 @@ export default function AdminScreen({
     const fullName = user.name || `${user.first_name || ''} ${user.last_name || ''}`.trim();
    
     const existingAssignedPlots = adminVisiblePlots
-      .filter(p => p.farmer === user.id || p.farmer_username === user.username)
-      .map(p => p.id);
+      .filter(p => (p.farmer && String(p.farmer) === String(user.id)) || p.farmer_username === user.username)
+      .map(p => String(p.id));
 
     setFormData({
       username: user.username || '',
@@ -228,18 +228,19 @@ export default function AdminScreen({
   };
 
   const togglePlotAssignment = (plotId) => {
+    const targetIdStr = String(plotId);
     setFormData(prev => {
-      const exists = prev.assignedPlotIds.includes(plotId);
+      const exists = prev.assignedPlotIds.includes(targetIdStr);
       return {
         ...prev,
         assignedPlotIds: exists
-          ? prev.assignedPlotIds.filter(id => id !== plotId)
-          : [...prev.assignedPlotIds, plotId]
+          ? prev.assignedPlotIds.filter(id => id !== targetIdStr)
+          : [...prev.assignedPlotIds, targetIdStr]
       };
     });
   };
 
-  const handleSaveUser = () => {
+  const handleSaveUser = async () => {
     if (!formData.username.trim()) {
       Alert.alert('Validation Error', 'Username is required.');
       return;
@@ -251,11 +252,16 @@ export default function AdminScreen({
     }
 
     if (editingUser) {
-      const selectedPlots = adminVisiblePlots.filter(p => formData.assignedPlotIds.includes(p.id));
-      onUpdateUser?.(editingUser.id, {
-        ...formData,
-        assignedPlots: selectedPlots
-      });
+      if (onAssignPlots) {
+        await onAssignPlots(editingUser.id, formData.assignedPlotIds);
+      }
+      if (onUpdateUser) {
+        const selectedPlots = adminVisiblePlots.filter(p => formData.assignedPlotIds.includes(String(p.id)));
+        onUpdateUser(editingUser.id, {
+          ...formData,
+          assignedPlots: selectedPlots
+        });
+      }
     } else {
       const newUser = {
         ...formData,
@@ -270,6 +276,7 @@ export default function AdminScreen({
       onAddUser?.(newUser);
     }
 
+    if (onRefreshData) onRefreshData();
     setIsModalOpen(false);
   };
 
@@ -499,12 +506,14 @@ export default function AdminScreen({
                 const role = user.role || (user.is_staff || user.is_superuser ? 'ADMIN' : 'FARMER');
                
                 const isCurrentAdmin =
-                  (currentAdminId && user.id === currentAdminId) ||
+                  (currentAdminId && String(user.id) === String(currentAdminId)) ||
                   (currentAdminUsername && user.username === currentAdminUsername);
                
                 const isActive = user.is_active !== undefined ? user.is_active : user.status !== 'Inactive';
 
-                const userPlots = adminVisiblePlots.filter(p => p.farmer === user.id || p.farmer_username === user.username);
+                const userPlots = adminVisiblePlots.filter(
+                  p => (p.farmer && String(p.farmer) === String(user.id)) || p.farmer_username === user.username
+                );
 
                 return (
                   <View key={user.id || user.username || idx} style={styles.userCard}>
@@ -717,7 +726,7 @@ export default function AdminScreen({
                   ) : (
                     <View style={styles.plotChecklist}>
                       {adminVisiblePlots.map((plot) => {
-                        const isSelected = formData.assignedPlotIds.includes(plot.id);
+                        const isSelected = formData.assignedPlotIds.includes(String(plot.id));
                         return (
                           <TouchableOpacity
                             key={plot.id}

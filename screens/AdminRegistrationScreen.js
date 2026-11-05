@@ -88,7 +88,7 @@ export default function AdminRegistrationScreen({ onRegister, onBackToLogin }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f4fbf7' },
-  headerCurve: { backgroundColor: '#15803d', borderBottomLeftRadius: 30, borderBottomRightRadius: 30, paddingVertical: 40, paddingHorizontal: 20, alignItems: 'center' },
+  headerCurve: { backgroundColor: '#70C247', borderBottomLeftRadius: 30, borderBottomRightRadius: 30, paddingVertical: 40, paddingHorizontal: 20, alignItems: 'center' },
   backBtn: { position: 'absolute', top: 20, left: 20, padding: 10 },
   headerIconCircle: { backgroundColor: '#cff4cd', padding: 15, borderRadius: 50, marginBottom: 15 },
   headerTitle: { color: '#fff', fontSize: 24, fontWeight: 'bold', marginBottom: 5 },
@@ -98,7 +98,7 @@ const styles = StyleSheet.create({
   inputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, paddingHorizontal: 15, paddingVertical: Platform.OS === 'ios' ? 15 : 12, marginBottom: 20 },
   inputIcon: { marginRight: 10 },
   input: { flex: 1, fontSize: 15, color: '#0f172a' },
-  submitButton: { backgroundColor: '#15803d', padding: 18, borderRadius: 12, alignItems: 'center', marginTop: 10 },
+  submitButton: { backgroundColor: '#70C247', padding: 18, borderRadius: 12, alignItems: 'center', marginTop: 10 },
   submitText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
   footerLink: { marginTop: 25, alignItems: 'center' },
   footerText: { color: '#64748b', fontSize: 14 }
