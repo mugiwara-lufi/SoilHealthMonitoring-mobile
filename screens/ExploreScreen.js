@@ -1,7 +1,18 @@
-// ExploreScreen.js
+// screens/ExploreScreen.js
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView, TextInput, Alert, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  SafeAreaView,
+  TextInput,
+  Alert,
+  ActivityIndicator,
+  Platform
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import MobileFooter from '../components/MobileFooter';
 
@@ -42,10 +53,16 @@ export default function ExploreScreen({
 
   useEffect(() => {
     fetchLatestSoilTelemetry();
+
+    // Auto-polling telemetry every 5 seconds
+    const interval = setInterval(() => {
+      fetchLatestSoilTelemetry();
+    }, 5000);
+
+    return () => clearInterval(interval);
   }, [plots]);
 
   const fetchLatestSoilTelemetry = async () => {
-    setLoadingTelemetry(true);
     try {
       const response = await fetch(
         `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=100`,
@@ -84,18 +101,24 @@ export default function ExploreScreen({
     }
   };
 
-  // Filter visible plots based on user role and explicit assignments
+  // Filter visible plots based on user role and explicit email/account ownership
   const activeUser = user || { id: currentAdminId, username: currentAdminUsername, email: adminEmail };
   const isAdmin = activeUser?.role?.toUpperCase() === 'ADMIN' || activeUser?.is_staff;
   const activeUserIdStr = activeUser?.id ? String(activeUser.id) : null;
   const activeUsername = activeUser?.username || currentAdminUsername;
 
   const visiblePlots = (plots || []).filter(plot => {
+    const plotOwnerEmail = plot?.owner_email ? String(plot.owner_email).toLowerCase().trim() : '';
+    const currentAdminEmailClean = adminEmail ? String(adminEmail).toLowerCase().trim() : '';
+
     if (isAdmin) {
-      // Admins/Owners see all plots
-      return true;
+      const matchesOwnerEmail = currentAdminEmailClean && plotOwnerEmail === currentAdminEmailClean;
+      const matchesAdminUser =
+        (activeUserIdStr && plot.farmer && String(plot.farmer) === activeUserIdStr) ||
+        (activeUsername && plot.farmer_username === activeUsername);
+
+      return matchesOwnerEmail || matchesAdminUser;
     } else {
-      // Farmers ONLY see plots explicitly assigned to their user ID or username
       const isAssignedToFarmer =
         (activeUserIdStr && plot.farmer && String(plot.farmer) === activeUserIdStr) ||
         (activeUsername && plot.farmer_username === activeUsername);
@@ -104,10 +127,9 @@ export default function ExploreScreen({
     }
   });
 
-  // Comprehensive warning/status evaluator using live telemetry
   const getDetailedPlotStatus = (plot) => {
     const hasSensor = Boolean(plot?.sensor_id && plot?.sensor_id !== "N/A");
-    
+   
     const liveRec =
       plotLatestTelemetryMap[`plot_${plot.id}`] ||
       plotLatestTelemetryMap[`sensor_${plot.sensor_id}`] ||
@@ -152,6 +174,7 @@ export default function ExploreScreen({
     return (
       plot.name.toLowerCase().includes(searchLower) ||
       (plot.crop || plot.crop_type || '').toLowerCase().includes(searchLower) ||
+      (plot.location || '').toLowerCase().includes(searchLower) ||
       statusInfo.label.toLowerCase().includes(searchLower)
     );
   });
@@ -223,109 +246,123 @@ export default function ExploreScreen({
   const renderPlotItem = ({ item }) => {
     const status = getDetailedPlotStatus(item);
     return (
-      <View style={styles.cardWrapper}>
-        <TouchableOpacity style={styles.plotCard} onPress={() => onSelectPlot(item)}>
-          <View style={[styles.iconContainer, { backgroundColor: status.color + '20' }]}>
-            <Ionicons name="leaf" size={24} color={status.color} />
+      <TouchableOpacity
+        style={styles.plotCard}
+        onPress={() => onSelectPlot(item)}
+        activeOpacity={0.8}
+      >
+        <View style={[styles.iconContainer, { backgroundColor: status.color + '15' }]}>
+          <Ionicons name="leaf" size={24} color={status.color} />
+        </View>
+
+        <View style={styles.textContainer}>
+          <Text style={styles.plotName}>{item.name}</Text>
+          <Text style={styles.cropType}>{item.crop || item.crop_type}</Text>
+          <Text style={styles.locationText}>
+            <Ionicons name="location-outline" size={12} color="#94a3b8" /> {item.location || 'No location'}
+          </Text>
+        </View>
+
+        <View style={styles.rightRowContainer}>
+          <View style={[styles.statusBadge, { backgroundColor: status.color + '15' }]}>
+            <View style={[styles.statusDot, { backgroundColor: status.color }]} />
+            <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
           </View>
-          <View style={styles.textContainer}>
-            <Text style={styles.plotName}>{item.name}</Text>
-            <Text style={styles.cropType}>{item.crop || item.crop_type}</Text>
-            <Text style={styles.locationText}>
-              <Ionicons name="location-outline" size={12} /> {item.location || 'No location'}
-            </Text>
-          </View>
-          <View style={styles.badgeColumn}>
-            <View style={[styles.statusBadge, { backgroundColor: status.color + '15', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }]}>
-              <View style={[styles.statusDot, { backgroundColor: status.color }]} />
-              <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
-            </View>
-          </View>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.deleteBtn} onPress={() => confirmDelete(item.id, item.name)}>
-          <Ionicons name="trash-outline" size={20} color="#ef4444" />
-        </TouchableOpacity>
-      </View>
+
+          <TouchableOpacity
+            style={styles.cardDeleteBtn}
+            onPress={() => confirmDelete(item.id, item.name)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="trash-outline" size={16} color="#ef4444" />
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
     );
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+      <View style={styles.topHeader}>
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.headerTitle}>Farm Overview</Text>
-            <Text style={styles.headerSubtitle}>Manage your farm plots</Text>
+            <Text style={styles.headerSubtitle}>Manage and monitor your farm plots</Text>
           </View>
-          <TouchableOpacity style={styles.profileBtn} onPress={onOpenProfile}>
-            <Ionicons name="person-circle-outline" size={28} color="#0f172a" />
+          <TouchableOpacity style={styles.profileBtn} onPress={onOpenProfile} activeOpacity={0.8}>
+            <Ionicons name="person-circle-outline" size={28} color="#ffffff" />
           </TouchableOpacity>
         </View>
+      </View>
 
-        <View style={styles.searchContainer}>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search by name, crop, or status..."
-            value={searchText}
-            onChangeText={setSearchText}
-            placeholderTextColor="#94a3b8"
-          />
-          {searchText !== '' && (
-            <TouchableOpacity onPress={() => setSearchText('')} style={styles.clearBtn}>
-              <Ionicons name="close-circle" size={18} color="#64748b" />
-            </TouchableOpacity>
+      <View style={styles.controlsCardWrapper}>
+        <View style={styles.controlsCard}>
+          <View style={styles.searchContainer}>
+            <Ionicons name="search-outline" size={18} color="#64748b" style={{ marginRight: 8 }} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search name, crop, location, status..."
+              value={searchText}
+              onChangeText={setSearchText}
+              placeholderTextColor="#94a3b8"
+            />
+            {searchText !== '' && (
+              <TouchableOpacity onPress={() => setSearchText('')} style={styles.clearBtn}>
+                <Ionicons name="close-circle" size={18} color="#64748b" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <TouchableOpacity style={styles.addButton} onPress={() => setShowAddForm(!showAddForm)} activeOpacity={0.8}>
+            <Text style={styles.addButtonText}>
+              {showAddForm ? (
+                <><Ionicons name="close" size={16} color="#ffffff" /> Cancel</>
+              ) : (
+                <><Ionicons name="add" size={16} color="#ffffff" /> Add New Plot</>
+              )}
+            </Text>
+          </TouchableOpacity>
+
+          {showAddForm && (
+            <View style={styles.formContainer}>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter Plot Name *"
+                placeholderTextColor="#94a3b8"
+                value={newPlotName}
+                onChangeText={setNewPlotName}
+              />
+
+              <TextInput
+                style={styles.input}
+                placeholder="Enter Crop Type *"
+                placeholderTextColor="#94a3b8"
+                value={newCropType}
+                onChangeText={setNewCropType}
+              />
+
+              <TextInput
+                style={styles.input}
+                placeholder="Enter Location *"
+                placeholderTextColor="#94a3b8"
+                value={newLocation}
+                onChangeText={setNewLocation}
+              />
+
+              <TouchableOpacity
+                style={styles.saveBtn}
+                onPress={submitNewPlot}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.saveBtnText}>Save Plot</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </View>
-
-        <TouchableOpacity style={styles.addButton} onPress={() => setShowAddForm(!showAddForm)}>
-          <Text style={styles.addButtonText}>
-            {showAddForm ? (
-              <><Ionicons name="close" size={14} color="#fff" /> Cancel</>
-            ) : (
-              <><Ionicons name="add" size={14} color="#fff" /> Add New Plot</>
-            )}
-          </Text>
-        </TouchableOpacity>
-
-        {showAddForm && (
-          <View style={styles.formContainer}>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter Plot Name *"
-              placeholderTextColor="#94a3b8"
-              value={newPlotName}
-              onChangeText={setNewPlotName}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Enter Crop Type *"
-              placeholderTextColor="#94a3b8"
-              value={newCropType}
-              onChangeText={setNewCropType}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Enter Location *"
-              placeholderTextColor="#94a3b8"
-              value={newLocation}
-              onChangeText={setNewLocation}
-            />
-
-            <TouchableOpacity
-              style={styles.saveBtn}
-              onPress={submitNewPlot}
-            >
-              <Text style={styles.saveBtnText}>Save Plot</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
       </View>
 
       {loadingTelemetry ? (
-        <ActivityIndicator size="large" color="#1b5e20" style={{ marginTop: 20 }} />
+        <ActivityIndicator size="large" color="#236339" style={{ marginTop: 30 }} />
       ) : (
         <FlatList
           data={filteredPlots}
@@ -333,6 +370,7 @@ export default function ExploreScreen({
           keyExtractor={(item) => item.id ? String(item.id) : Math.random().toString()}
           contentContainerStyle={styles.listPadding}
           ListEmptyComponent={<Text style={styles.emptyText}>No plots found</Text>}
+          showsVerticalScrollIndicator={false}
         />
       )}
 
@@ -342,33 +380,108 @@ export default function ExploreScreen({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc' },
-  header: { padding: 25, paddingTop: 40, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
-  headerTitle: { fontSize: 28, fontWeight: 'bold', color: '#1b5e20' },
-  headerSubtitle: { fontSize: 14, color: '#64748b' },
-  profileBtn: { width: 45, height: 45, borderRadius: 22.5, backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#1b5e20', justifyContent: 'center', alignItems: 'center' },
-  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 10, paddingHorizontal: 15, marginBottom: 15 },
-  searchInput: { flex: 1, height: 45, fontSize: 14, color: '#0f172a' },
-  clearBtn: { padding: 5 },
-  addButton: { backgroundColor: '#1b5e20', padding: 12, borderRadius: 8, alignItems: 'center' },
-  addButtonText: { color: '#fff', fontWeight: 'bold' },
-  formContainer: { marginTop: 15, flexDirection: 'column', gap: 10 },
-  input: { width: '100%', minHeight: 45, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 15, paddingVertical: 10, backgroundColor: '#f8fafc', color: '#0f172a' },
-  saveBtn: { backgroundColor: '#1e293b', padding: 12, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
-  saveBtnText: { color: '#fff', fontWeight: 'bold' },
-  listPadding: { padding: 20 },
-  cardWrapper: { flexDirection: 'row', alignItems: 'center', marginBottom: 15 },
-  plotCard: { flex: 1, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 16, elevation: 2 },
-  deleteBtn: { padding: 15 },
-  iconContainer: { width: 50, height: 50, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
-  textContainer: { flex: 1 },
-  plotName: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
-  cropType: { fontSize: 14, color: '#64748b' },
-  locationText: { fontSize: 12, color: '#94a3b8', marginTop: 2 },
-  badgeColumn: { justifyContent: 'center', alignItems: 'flex-end' },
-  statusBadge: { flexDirection: 'row', alignItems: 'center' },
-  statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  statusText: { fontSize: 11, fontWeight: '600', textTransform: 'uppercase' },
-  emptyText: { textAlign: 'center', marginTop: 50, color: '#64748b', fontSize: 16 }
+  container: { flex: 1, backgroundColor: '#f6fdf8' },
+  topHeader: {
+    backgroundColor: '#236339',
+    paddingTop: Platform.OS === 'ios' ? 20 : 40,
+    paddingHorizontal: 20,
+    paddingBottom: 50,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
+  },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  headerTitle: { fontSize: 26, fontWeight: 'bold', color: '#ffffff' },
+  headerSubtitle: { fontSize: 13, color: '#dcfce7', marginTop: 2 },
+  profileBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  controlsCardWrapper: {
+    paddingHorizontal: 20,
+    marginTop: -35,
+    marginBottom: 5,
+  },
+  controlsCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 10,
+    height: 44,
+  },
+  searchInput: { flex: 1, height: 44, fontSize: 14, color: '#0f172a' },
+  clearBtn: { padding: 4 },
+  addButton: {
+    backgroundColor: '#236339',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  addButtonText: { color: '#ffffff', fontWeight: 'bold', fontSize: 14 },
+  formContainer: { marginTop: 12, flexDirection: 'column', gap: 10 },
+  input: {
+    width: '100%',
+    minHeight: 44,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    color: '#0f172a',
+    fontSize: 14,
+  },
+  saveBtn: { backgroundColor: '#15803d', padding: 12, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+  saveBtnText: { color: '#ffffff', fontWeight: 'bold', fontSize: 14 },
+  listPadding: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 100 },
+  plotCard: {
+    backgroundColor: '#ffffff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 20,
+    marginBottom: 14,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+  },
+  iconContainer: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  textContainer: { flex: 1, marginRight: 8 },
+  plotName: { fontSize: 16, fontWeight: 'bold', color: '#0f172a' },
+  cropType: { fontSize: 13, color: '#64748b', marginTop: 2 },
+  locationText: { fontSize: 12, color: '#94a3b8', marginTop: 4 },
+  rightRowContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  cardDeleteBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#fef2f2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 12 },
+  statusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 5 },
+  statusText: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
+  emptyText: { textAlign: 'center', marginTop: 40, color: '#64748b', fontSize: 15 }
 });

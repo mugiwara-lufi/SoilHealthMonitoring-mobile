@@ -1,4 +1,4 @@
-// MonitorScreen.js
+// screens/MonitorScreen.js
 
 import React, { useEffect, useState } from 'react';
 import {
@@ -21,7 +21,7 @@ import { Buffer } from 'buffer';
 import MobileFooter from '../components/MobileFooter';
 
 const screenWidth = Dimensions.get('window').width - 30;
-const API_BASE_URL = 'http://10.103.176.28:8000';
+const API_BASE_URL = 'http://10.92.77.28:8000';
 
 // Supabase Direct Credentials
 const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
@@ -81,6 +81,22 @@ export default function MonitorScreen({
     }
   }, [plotData?.sensor_id]);
 
+  useEffect(() => {
+    fetchAnalytics();
+    if (activeSensorId) {
+      fetchSupabaseLiveRecord(activeSensorId);
+    }
+
+    // Auto-polling Supabase live records every 3 seconds
+    const interval = setInterval(() => {
+      if (activeSensorId) {
+        fetchSupabaseLiveRecord(activeSensorId);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [plotData?.id, activeSensorId]);
+
   const fetchSupabaseLiveRecord = async (targetSensorId) => {
     const sId = targetSensorId || activeSensorId;
     if (!sId || sId === 'N/A') {
@@ -130,11 +146,6 @@ export default function MonitorScreen({
       setLoadingCharts(false);
     }
   };
-
-  useEffect(() => {
-    fetchAnalytics();
-    if (activeSensorId) fetchSupabaseLiveRecord(activeSensorId);
-  }, [plotData?.id, activeSensorId]);
 
   const handleManualRefresh = () => {
     fetchAnalytics();
@@ -209,7 +220,6 @@ export default function MonitorScreen({
               if (prevSensorId) {
                 await updateSupabasePlotId(prevSensorId, null);
 
-                // Issue Wi-Fi reset command to the IoT hardware
                 try {
                   await fetch(`${SUPABASE_URL}/rest/v1/device_commands`, {
                     method: 'POST',
@@ -578,7 +588,7 @@ export default function MonitorScreen({
             {/* EC Card */}
             <View style={styles.metricCard}>
               <View style={[styles.iconContainer, { backgroundColor: '#e0e7ff' }]}>
-                <Ionicons name="flash" size={22} color="#fff764" />
+                <Ionicons name="flash" size={22} color="#eab308" />
               </View>
               <Text style={styles.cardLabel}>EC</Text>
               <Text style={styles.cardValue}>

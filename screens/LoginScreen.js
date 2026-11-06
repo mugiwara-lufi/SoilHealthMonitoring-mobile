@@ -1,141 +1,204 @@
+// screens/LoginScreen.js
+
 import React, { useState } from 'react';
 import {
   View,
   Text,
+  StyleSheet,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
+  Modal,
+  SafeAreaView,
+  StatusBar,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
-  Modal
+  ScrollView
 } from 'react-native';
-// If you are using Expo, you can use Ionicons and FontAwesome5
-// from @expo/vector-icons. If you are not using Expo, you will need to
-// install and link react-native-vector-icons.
-import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 export default function LoginScreen({ onLogin, onNavigateRegister }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [secureTextEntry, setSecureTextEntry] = useState(true);
-  
-  // State to control the Registration Role Popup
+  const [showPassword, setShowPassword] = useState(false);
   const [showRoleModal, setShowRoleModal] = useState(false);
 
   const isFormValid = email.trim().length > 0 && password.trim().length > 0;
 
+  const handleLoginSubmit = () => {
+    if (isFormValid && onLogin) {
+      onLogin(email.trim(), password.trim());
+    }
+  };
+
+  const handleSelectRole = (roleType) => {
+    setShowRoleModal(false);
+    if (onNavigateRegister) {
+      onNavigateRegister(roleType);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="#0f5132" />
+
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardView}
+        style={{ flex: 1 }}
       >
-        <View style={styles.inner}>
-         
-          {/* Logo Section */}
-          <View style={styles.logoContainer}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContainer}
+          bounces={false}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Hero Banner Header */}
+          <View style={styles.heroBanner}>
+            <View style={styles.ambientCircle1} />
+            <View style={styles.ambientCircle2} />
+
             <View style={styles.iconCircle}>
-              <FontAwesome5 name="seedling" size={50} color="#15803d" />
+              <MaterialCommunityIcons name="sprout" size={42} color="#15803d" />
             </View>
-            <Text style={styles.title}>JJMAP</Text>
-            <Text style={styles.subtitle}>Soil Health Monitor</Text>
-            <Text style={styles.platformSub}>Joint Soil Monitoring Application Platform</Text>
-          </View>
-         
-          {/* Email / Username Field */}
-          <Text style={styles.inputLabel}>Username / Email</Text>
-          <View style={styles.inputWrapper}>
-            <Ionicons name="person-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your username or email"
-              placeholderTextColor="#94a3b8"
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-            />
-          </View>
 
-          {/* Password Field */}
-          <Text style={styles.inputLabel}>Password</Text>
-          <View style={styles.inputWrapper}>
-            <Ionicons name="lock-closed-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your password"
-              placeholderTextColor="#94a3b8"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={secureTextEntry}
-            />
-            <TouchableOpacity onPress={() => setSecureTextEntry(!secureTextEntry)}>
-                <Ionicons name={secureTextEntry ? "eye-outline" : "eye-off-outline"} size={20} color="#94a3b8" />
-            </TouchableOpacity>
-          </View>
-         
-          {/* Login Button */}
-          <TouchableOpacity
-            style={[styles.button, { opacity: isFormValid ? 1 : 0.7 }]}
-            onPress={() => isFormValid && onLogin(email, password)}
-            disabled={!isFormValid}
-          >
-            <Text style={styles.buttonText}>Login to Dashboard</Text>
-          </TouchableOpacity>
-
-          {/* Demo Credentials */}
-          <View style={styles.demoBox}>
-            <Text style={styles.demoText}>
-              Demo: <Text style={styles.demoBold}>admin@jjmap.ph</Text> · password: <Text style={styles.demoBold}>admin123</Text>
+            <Text style={styles.brandTitle}>JJMAP</Text>
+            <Text style={styles.brandSubtitle}>Soil Health Monitor</Text>
+            <Text style={styles.brandDescription}>
+              Joint Soil Monitoring Application Platform
             </Text>
           </View>
 
-          {/* Sign Up Link */}
-          <View style={styles.signupTextContainer}>
-            <Text style={styles.noAccountText}>Don't have an account? </Text>
-            <TouchableOpacity onPress={() => setShowRoleModal(true)}>
-                <Text style={styles.signupText}>Sign Up</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+          {/* Login Form Card */}
+          <View style={styles.formWrapper}>
+            <View style={styles.formCard}>
+              {/* Username / Email Input */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Username or Email</Text>
+                <View style={styles.inputContainer}>
+                  <Ionicons name="person-outline" size={20} color="#15803d" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder="Enter your username or email"
+                    placeholderTextColor="#94a3b8"
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                  />
+                </View>
+              </View>
 
-        {/* Footer */}
-        <View style={styles.footerContainer}>
-            <Text style={styles.footerText}>USTP · Cagayan de Oro · 2026</Text>
-        </View>
+              {/* Password Input */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Password</Text>
+                <View style={styles.inputContainer}>
+                  <Ionicons name="lock-closed-outline" size={20} color="#15803d" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    value={password}
+                    onChangeText={setPassword}
+                    placeholder="Enter your password"
+                    placeholderTextColor="#94a3b8"
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowPassword(!showPassword)}
+                    style={styles.eyeIconBtn}
+                  >
+                    <Ionicons
+                      name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color="#94a3b8"
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Submit Login Button */}
+              <TouchableOpacity
+                onPress={handleLoginSubmit}
+                disabled={!isFormValid}
+                activeOpacity={0.8}
+                style={[
+                  styles.loginBtn,
+                  !isFormValid && styles.disabledBtn
+                ]}
+              >
+                <Text style={styles.loginBtnText}>Login to Dashboard</Text>
+                <Ionicons name="arrow-forward" size={18} color="#ffffff" style={{ marginLeft: 6 }} />
+              </TouchableOpacity>
+
+              {/* Sign Up Redirect */}
+              <View style={styles.signUpRow}>
+                <Text style={styles.signUpPrompt}>Don't have an account? </Text>
+                <TouchableOpacity onPress={() => setShowRoleModal(true)}>
+                  <Text style={styles.signUpLink}>Sign Up</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Footer */}
+            <View style={styles.footerInfo}>
+              <Text style={styles.footerText}>USTP · Cagayan de Oro · 2026</Text>
+            </View>
+          </View>
+        </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Role Selection Modal */}
-      <Modal visible={showRoleModal} transparent animationType="fade">
+      {/* Account Type Selection Modal */}
+      <Modal
+        visible={showRoleModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowRoleModal(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Choose Account Type</Text>
-            <Text style={styles.modalSub}>How would you like to register?</Text>
+            <View style={styles.modalBadge}>
+              <Ionicons name="person-add-outline" size={26} color="#15803d" />
+            </View>
 
-            <TouchableOpacity 
-              style={styles.roleButton} 
-              onPress={() => { setShowRoleModal(false); onNavigateRegister('AdminRegister'); }}
+            <Text style={styles.modalTitle}>Choose Account Type</Text>
+            <Text style={styles.modalSubtitle}>
+              Select your primary role to proceed with registration
+            </Text>
+
+            {/* Admin Selection */}
+            <TouchableOpacity
+              style={styles.roleCard}
+              onPress={() => handleSelectRole('AdminRegister')}
+              activeOpacity={0.8}
             >
-              <Ionicons name="shield-checkmark-outline" size={24} color="#15803d" />
+              <View style={styles.roleIconBox}>
+                <Ionicons name="shield-checkmark-outline" size={24} color="#15803d" />
+              </View>
               <View style={styles.roleTextContainer}>
                 <Text style={styles.roleTitle}>Farm Owner / Admin</Text>
                 <Text style={styles.roleDesc}>Manage farms, invite farmers, and oversee plots.</Text>
               </View>
+              <Ionicons name="chevron-forward" size={20} color="#94a3b8" />
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.roleButton} 
-              onPress={() => { setShowRoleModal(false); onNavigateRegister('FarmerRegister'); }}
+            {/* Farmer Selection */}
+            <TouchableOpacity
+              style={styles.roleCard}
+              onPress={() => handleSelectRole('FarmerRegister')}
+              activeOpacity={0.8}
             >
-              <Ionicons name="leaf-outline" size={24} color="#15803d" />
+              <View style={styles.roleIconBox}>
+                <Ionicons name="leaf-outline" size={24} color="#15803d" />
+              </View>
               <View style={styles.roleTextContainer}>
                 <Text style={styles.roleTitle}>Farmer</Text>
-                <Text style={styles.roleDesc}>Inherit plots and monitor soil health data.</Text>
+                <Text style={styles.roleDesc}>Inherit plots and monitor live soil telemetry.</Text>
               </View>
+              <Ionicons name="chevron-forward" size={20} color="#94a3b8" />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.cancelModalButton} onPress={() => setShowRoleModal(false)}>
-              <Text style={styles.cancelModalText}>Cancel</Text>
+            <TouchableOpacity
+              onPress={() => setShowRoleModal(false)}
+              style={styles.modalCancelBtn}
+            >
+              <Text style={styles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -145,173 +208,246 @@ export default function LoginScreen({ onLogin, onNavigateRegister }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fcfdfd' },
-  keyboardView: { flex: 1 },
-  inner: {
+  container: {
     flex: 1,
-    paddingHorizontal: 25,
-    justifyContent: 'flex-start',
-    paddingTop: 30
+    backgroundColor: '#0f172a',
   },
-  logoContainer: {
+  scrollContainer: {
+    flexGrow: 1,
+    backgroundColor: '#f1f5f9',
+  },
+  heroBanner: {
+    backgroundColor: '#15803d',
+    paddingTop: 40,
+    paddingBottom: 60,
+    paddingHorizontal: 24,
     alignItems: 'center',
-    marginBottom: 20
+    borderBottomLeftRadius: 36,
+    borderBottomRightRadius: 36,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  ambientCircle1: {
+    position: 'absolute',
+    top: -30,
+    left: -30,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  ambientCircle2: {
+    position: 'absolute',
+    bottom: -20,
+    right: -20,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
   },
   iconCircle: {
-    backgroundColor: '#fff',
-    padding: 15,
-    borderRadius: 70,
-    marginTop: 20,
-    marginBottom: 20,
-    elevation: 3, // Android shadow
-    shadowColor: '#000', // iOS shadow
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: '#ffffff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
   },
-  title: { fontSize: 36, fontWeight: 'bold', color: '#15803d', textAlign: 'center', marginBottom: 5 },
-  subtitle: { fontSize: 20, fontWeight: '600', color: '#15803d', textAlign: 'center', marginBottom: 5 },
-  platformSub: { fontSize: 13, color: '#94a3b8', textAlign: 'center', marginBottom: 30 },
-  inputLabel: {
+  brandTitle: {
+    fontSize: 30,
+    fontWeight: '900',
+    color: '#ffffff',
+    letterSpacing: 2,
+  },
+  brandSubtitle: {
     fontSize: 16,
-    color: '#000',
-    marginBottom: 8,
-    fontWeight: '500',
-    paddingLeft: 5
+    fontWeight: '700',
+    color: '#dcfce7',
+    marginTop: 4,
   },
-  inputWrapper: {
+  brandDescription: {
+    fontSize: 11,
+    color: '#bbf7d0',
+    marginTop: 4,
+    letterSpacing: 0.5,
+  },
+  formWrapper: {
+    flex: 1,
+    paddingHorizontal: 20,
+    marginTop: -30,
+    paddingBottom: 30,
+    justifyContent: 'space-between',
+  },
+  formCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 24,
+    elevation: 4,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+    marginBottom: 6,
+    marginLeft: 2,
+  },
+  inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    borderWidth: 1,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1.5,
     borderColor: '#e2e8f0',
-    paddingVertical: Platform.OS === 'ios' ? 18 : 14,
-    paddingHorizontal: 18,
-    borderRadius: 15,
-    marginBottom: 20,
+    borderRadius: 16,
+    height: 52,
+    paddingHorizontal: 14,
   },
   inputIcon: {
     marginRight: 10,
   },
-  input: {
+  textInput: {
     flex: 1,
-    fontSize: 16,
-    color: '#000'
+    fontSize: 14,
+    color: '#0f172a',
   },
-  button: {
-    backgroundColor: '#15803d',
-    padding: 20,
-    borderRadius: 15,
+  eyeIconBtn: {
+    padding: 6,
+  },
+  loginBtn: {
+    height: 52,
+    backgroundColor: '#16a34a',
+    borderRadius: 16,
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 20,
-    elevation: 2, // Android shadow
-    shadowColor: '#000', // iOS shadow
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 3,
+    justifyContent: 'center',
+    marginTop: 8,
+    elevation: 2,
+    shadowColor: '#16a34a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
   },
-  buttonText: { color: '#fff', fontWeight: '700', fontSize: 17 },
-  demoBox: {
-    backgroundColor: '#e6f6eb',
-    borderWidth: 1,
-    borderColor: '#a3e6b1',
-    borderRadius: 15,
-    padding: 15,
-    marginBottom: 30,
-    alignItems: 'center'
+  disabledBtn: {
+    opacity: 0.5,
   },
-  demoText: {
-    fontSize: 13,
-    color: '#15803d',
-    textAlign: 'center',
+  loginBtnText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: 'bold',
   },
-  demoBold: {
-    fontWeight: '600',
-  },
-  signupTextContainer: {
+  signUpRow: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginBottom: 40
+    alignItems: 'center',
+    marginTop: 18,
   },
-  noAccountText: {
+  signUpPrompt: {
+    fontSize: 13,
     color: '#64748b',
-    fontSize: 16
   },
-  signupText: {
+  signUpLink: {
+    fontSize: 13,
+    fontWeight: 'bold',
     color: '#15803d',
-    fontSize: 16,
-    fontWeight: '600'
   },
-  footerContainer: {
-    width: '100%',
-    paddingBottom: Platform.OS === 'ios' ? 10 : 20,
+  footerInfo: {
+    marginTop: 30,
     alignItems: 'center',
   },
   footerText: {
     fontSize: 12,
+    fontWeight: '500',
     color: '#94a3b8',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  modalContent: {
+    width: '100%',
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    elevation: 10,
+  },
+  modalBadge: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#f0fdf4',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontSize: 19,
+    fontWeight: 'bold',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
     textAlign: 'center',
+    marginBottom: 20,
   },
-
-  /* ---------- MODAL STYLES ---------- */
-  modalOverlay: { 
-    flex: 1, 
-    backgroundColor: 'rgba(0,0,0,0.5)', 
-    justifyContent: 'center', 
-    alignItems: 'center' 
+  roleCard: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
   },
-  modalContent: { 
-    width: '85%', 
-    backgroundColor: '#fff', 
-    borderRadius: 20, 
-    padding: 25, 
-    alignItems: 'center' 
+  roleIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#dcfce7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
-  modalTitle: { 
-    fontSize: 20, 
-    fontWeight: 'bold', 
-    color: '#0f172a', 
-    marginBottom: 8 
+  roleTextContainer: {
+    flex: 1,
   },
-  modalSub: { 
-    fontSize: 14, 
-    color: '#64748b', 
-    marginBottom: 20, 
-    textAlign: 'center' 
+  roleTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#0f172a',
   },
-  roleButton: { 
-    width: '100%', 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    backgroundColor: '#f8fafc', 
-    padding: 15, 
-    borderRadius: 12, 
-    borderWidth: 1, 
-    borderColor: '#e2e8f0', 
-    marginBottom: 15 
+  roleDesc: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
   },
-  roleTextContainer: { 
-    flex: 1, 
-    marginLeft: 15 
+  modalCancelBtn: {
+    marginTop: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
   },
-  roleTitle: { 
-    fontSize: 16, 
-    fontWeight: 'bold', 
-    color: '#0f172a' 
+  modalCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#94a3b8',
   },
-  roleDesc: { 
-    fontSize: 12, 
-    color: '#64748b', 
-    marginTop: 2 
-  },
-  cancelModalButton: { 
-    marginTop: 10, 
-    padding: 10 
-  },
-  cancelModalText: { 
-    color: '#64748b', 
-    fontWeight: '600', 
-    fontSize: 16 
-  }
 });

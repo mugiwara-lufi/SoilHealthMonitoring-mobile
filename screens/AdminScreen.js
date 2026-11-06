@@ -18,9 +18,50 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-// Supabase Direct Credentials
+// Supabase Direct Credentials (for Telemetry Logs / Analytics)
 const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_cyQgbi_v02dkhswabEBWoQ_3exGPlaK';
+
+// Metric Status Threshold Helpers for Dynamic Color-Coding
+const getPhStatus = (ph) => {
+  if (ph === null || ph === undefined || isNaN(parseFloat(ph))) {
+    return { bg: '#f1f5f9', text: '#64748b', border: '#cbd5e1' };
+  }
+  const val = parseFloat(ph);
+  if (val < 5.5 || val > 8.0) return { bg: '#fee2e2', text: '#dc2626', border: '#fca5a5' };
+  if (val < 6.0 || val > 7.5) return { bg: '#fef9c3', text: '#a16207', border: '#fde047' };
+  return { bg: '#ecfdf5', text: '#047857', border: '#a7f3d0' };
+};
+
+const getMoistureStatus = (m) => {
+  if (m === null || m === undefined || isNaN(parseFloat(m))) {
+    return { bg: '#f1f5f9', text: '#64748b', border: '#cbd5e1' };
+  }
+  const val = parseFloat(m);
+  if (val < 35 || val > 90) return { bg: '#fee2e2', text: '#dc2626', border: '#fca5a5' };
+  if (val < 50 || val > 80) return { bg: '#fef9c3', text: '#a16207', border: '#fde047' };
+  return { bg: '#ecfdf5', text: '#047857', border: '#a7f3d0' };
+};
+
+const getTempStatus = (t) => {
+  if (t === null || t === undefined || isNaN(parseFloat(t))) {
+    return { bg: '#f1f5f9', text: '#64748b', border: '#cbd5e1' };
+  }
+  const val = parseFloat(t);
+  if (val < 12 || val > 38) return { bg: '#fee2e2', text: '#dc2626', border: '#fca5a5' };
+  if (val < 18 || val > 32) return { bg: '#fef9c3', text: '#a16207', border: '#fde047' };
+  return { bg: '#ecfdf5', text: '#047857', border: '#a7f3d0' };
+};
+
+const getBatteryStatus = (b) => {
+  if (b === null || b === undefined || isNaN(parseFloat(b))) {
+    return { bg: '#f1f5f9', text: '#64748b', border: '#cbd5e1' };
+  }
+  const val = parseFloat(b);
+  if (val < 20) return { bg: '#fee2e2', text: '#dc2626', border: '#fca5a5' };
+  if (val < 50) return { bg: '#fef9c3', text: '#a16207', border: '#fde047' };
+  return { bg: '#ecfdf5', text: '#047857', border: '#a7f3d0' };
+};
 
 export default function AdminScreen({
   plots = [],
@@ -28,6 +69,7 @@ export default function AdminScreen({
   logs = [],
   currentAdminId,
   currentAdminUsername,
+  token,
   onSelectPlot,
   onOpenProfile,
   currentTab,
@@ -46,6 +88,10 @@ export default function AdminScreen({
   const [supabaseLogs, setSupabaseLogs] = useState([]);
   const [plotLatestPhMap, setPlotLatestPhMap] = useState({});
   const [loadingLogs, setLoadingLogs] = useState(false);
+
+  // Folder Logs Pop-up Modal State
+  const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
+  const [activeFolderData, setActiveFolderData] = useState({ name: '', logs: [] });
 
   const safeUsers = users || [];
   const safePlots = plots || [];
@@ -101,14 +147,13 @@ export default function AdminScreen({
           records.forEach((rec) => {
             const sId = rec.sensor_id;
             const pId = rec.plot_id;
-            const phVal = rec.ph_level ?? rec.ph;
 
-            if (phVal !== undefined && phVal !== null) {
+            if (rec) {
               if (sId && !phMap[`sensor_${sId}`]) {
-                phMap[`sensor_${sId}`] = phVal;
+                phMap[`sensor_${sId}`] = rec;
               }
               if (pId && !phMap[`plot_${pId}`]) {
-                phMap[`plot_${pId}`] = phVal;
+                phMap[`plot_${pId}`] = rec;
               }
             }
           });
@@ -124,7 +169,7 @@ export default function AdminScreen({
     setLoadingLogs(true);
     try {
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=50`,
+        `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=100`,
         {
           method: 'GET',
           headers: {
@@ -146,7 +191,13 @@ export default function AdminScreen({
     }
   };
 
-  const adminVisibleUsers = safeUsers.filter((u) => {
+  const handleOpenFolderModal = (folderName, logsList) => {
+    setActiveFolderData({ name: folderName, logs: logsList });
+    setIsFolderModalOpen(true);
+  };
+
+  // Base list of users associated with this admin
+  const allAdminAssociatedUsers = safeUsers.filter((u) => {
     const isSelf = (currentAdminId && String(u.id) === String(currentAdminId)) ||
                    (currentAdminUsername && u.username === currentAdminUsername);
     const isCreatedByThisAdmin = String(u.createdByAdminId) === String(currentAdminId) ||
@@ -154,6 +205,22 @@ export default function AdminScreen({
                                  String(u.owner_id) === String(currentAdminId) ||
                                  (u.owner_username && u.owner_username === currentAdminUsername);
     return isSelf || isCreatedByThisAdmin;
+  });
+
+  // PENDING USERS: Strictly inactive accounts waiting for activation
+  const pendingActivationUsers = allAdminAssociatedUsers.filter((u) => {
+    const isSelf = (currentAdminId && String(u.id) === String(currentAdminId)) ||
+                   (currentAdminUsername && u.username === currentAdminUsername);
+    const isActive = u.is_active !== undefined ? u.is_active : true;
+    return !isSelf && !isActive;
+  });
+
+  // MANAGED USERS: Strictly ACTIVE accounts (plus the admin themselves)
+  const adminVisibleUsers = allAdminAssociatedUsers.filter((u) => {
+    const isSelf = (currentAdminId && String(u.id) === String(currentAdminId)) ||
+                   (currentAdminUsername && u.username === currentAdminUsername);
+    const isActive = u.is_active !== undefined ? u.is_active : true;
+    return isSelf || isActive;
   });
 
   const adminVisiblePlots = safePlots.filter((p) => {
@@ -182,16 +249,47 @@ export default function AdminScreen({
 
   const totalPlots = adminVisiblePlots.length;
   const sensorsAssigned = adminVisiblePlots.filter(p => p.sensor_id && p.sensor_id !== 'N/A');
-  const onlineSensors = adminVisiblePlots.filter(p => p.status === 'Online');
+
+  const isPlotOnline = (p) => {
+    const hasSensor = Boolean(p.sensor_id && p.sensor_id !== 'N/A');
+    if (!hasSensor) return false;
+
+    const liveRecord =
+      plotLatestPhMap[`plot_${p.id}`] ||
+      plotLatestPhMap[`sensor_${p.sensor_id}`];
+
+    return Boolean(liveRecord || p.status === 'Online');
+  };
+
+  const onlineSensors = adminVisiblePlots.filter(isPlotOnline);
  
   const phAlertsCount = adminVisiblePlots.filter(p => {
-    const latestPh =
+    const liveRec =
       plotLatestPhMap[`plot_${p.id}`] ||
-      plotLatestPhMap[`sensor_${p.sensor_id}`] ||
-      (p.records && p.records.length > 0 ? p.records[0].ph_level : p.sensors?.ph);
+      plotLatestPhMap[`sensor_${p.sensor_id}`];
+    const latestPh = liveRec?.ph_level ?? liveRec?.ph ?? (p.records && p.records.length > 0 ? p.records[0].ph_level : p.sensors?.ph);
     const phVal = parseFloat(latestPh);
     return !isNaN(phVal) && phVal < 5.5;
   }).length;
+
+  // Group Supabase Telemetry Logs by Plot Name
+  const groupedLogs = supabaseLogs.reduce((acc, log) => {
+    const matchedPlot = safePlots.find(
+      (p) =>
+        (log.plot_id && String(p.id) === String(log.plot_id)) ||
+        (log.sensor_id && String(p.sensor_id) === String(log.sensor_id))
+    );
+
+    const folderName = matchedPlot
+      ? matchedPlot.name
+      : (log.plot_id ? `Plot ID: ${log.plot_id}` : 'Unassigned Sensors');
+
+    if (!acc[folderName]) {
+      acc[folderName] = [];
+    }
+    acc[folderName].push(log);
+    return acc;
+  }, {});
 
   const handleOpenAddModal = () => {
     setEditingUser(null);
@@ -241,43 +339,29 @@ export default function AdminScreen({
   };
 
   const handleSaveUser = async () => {
-    if (!formData.username.trim()) {
-      Alert.alert('Validation Error', 'Username is required.');
-      return;
-    }
-
-    if (!editingUser && !formData.password.trim()) {
-      Alert.alert('Validation Error', 'Password is required for new users.');
-      return;
-    }
-
+    if (!formData.username.trim()) { Alert.alert('Validation Error', 'Username is required.'); return; }
+    if (!editingUser && !formData.password.trim()) { Alert.alert('Validation Error', 'Password is required for new users.'); return; }
     if (editingUser) {
+      if (!onUpdateUser) { Alert.alert('Error', 'User update handler is not connected.'); return; }
+      const updated = await onUpdateUser(editingUser.id, {
+        username: formData.username.trim(), name: formData.name,
+        email: formData.email, phone: formData.phone, role: formData.role,
+      });
+      if (!updated) return;
       if (onAssignPlots) {
-        await onAssignPlots(editingUser.id, formData.assignedPlotIds);
+        const assigned = await onAssignPlots(editingUser.id, formData.assignedPlotIds);
+        if (!assigned) return;
       }
-      if (onUpdateUser) {
-        const selectedPlots = adminVisiblePlots.filter(p => formData.assignedPlotIds.includes(String(p.id)));
-        onUpdateUser(editingUser.id, {
-          ...formData,
-          assignedPlots: selectedPlots
-        });
-      }
+      Alert.alert('Success', 'User information updated successfully.');
     } else {
-      const newUser = {
-        ...formData,
-        is_active: true,
-        is_staff: formData.role === 'ADMIN',
-        createdByAdminId: currentAdminId,
-        createdByAdminUsername: currentAdminUsername,
-        owner_email: loggedInAdmin?.email || '',
-        assignedPlots: []
-      };
-
-      onAddUser?.(newUser);
+      if (!onAddUser) { Alert.alert('Error', 'User registration handler is not connected.'); return; }
+      const created = await onAddUser({
+        ...formData, createdByAdminId: currentAdminId,
+        createdByAdminUsername: currentAdminUsername, owner_email: loggedInAdmin?.email || '',
+      });
+      if (!created) return;
     }
-
-    if (onRefreshData) onRefreshData();
-    setIsModalOpen(false);
+    await onRefreshData?.(); setIsModalOpen(false);
   };
 
   const handleDeleteUser = (userId) => {
@@ -349,7 +433,9 @@ export default function AdminScreen({
                   accessibilityState={{ selected: isActive }}
                 >
                   <Text style={[styles.subTabText, isActive && styles.subTabTextActive]}>
-                    {tab}
+                    {tab === 'Users' && pendingActivationUsers.length > 0
+                      ? `Users (${pendingActivationUsers.length} Pending)`
+                      : tab}
                   </Text>
                 </TouchableOpacity>
               );
@@ -374,7 +460,7 @@ export default function AdminScreen({
                   <Text style={styles.cardLabel}>ONLINE SENSORS</Text>
                 </View>
                 <Text style={styles.cardValue}>{onlineSensors.length}/{sensorsAssigned.length}</Text>
-                <Text style={styles.cardSubtext}>LoRa active</Text>
+                <Text style={styles.cardSubtext}>IoT active</Text>
               </View>
 
               <View style={styles.metricCard}>
@@ -386,34 +472,7 @@ export default function AdminScreen({
               </View>
             </View>
 
-            {/* Network Status */}
-            <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>LoRa Network Status</Text>
-              {adminVisiblePlots.length === 0 ? (
-                <Text style={styles.emptyText}>No devices connected.</Text>
-              ) : (
-                adminVisiblePlots.map((plot, index) => (
-                  <View key={plot.id || index} style={styles.networkRow}>
-                    <View style={styles.networkInfo}>
-                      <View style={[styles.statusDot, { backgroundColor: plot.status === 'Online' ? '#10b981' : '#64748b' }]} />
-                      <Text style={styles.networkName}>
-                        JJMAP({plot.sensor_id && plot.sensor_id !== 'N/A' ? plot.sensor_id : 'No Sensor'})
-                      </Text>
-                    </View>
-
-                    <View style={styles.networkMeta}>
-                      <View style={[styles.statusBadge, { backgroundColor: plot.status === 'Online' ? '#dcfce7' : '#f1f5f9' }]}>
-                        <Text style={[styles.statusBadgeText, { color: plot.status === 'Online' ? '#15803d' : '#64748b' }]}>
-                          {plot.status === 'Online' ? 'online' : 'offline'}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                ))
-              )}
-            </View>
-
-            {/* Plot Overview with Refresh Button */}
+            {/* Plot Overview Card */}
             <View style={styles.sectionCard}>
               <View style={styles.sectionCardHeaderRow}>
                 <Text style={styles.sectionTitle}>Plot Overview</Text>
@@ -433,12 +492,7 @@ export default function AdminScreen({
                 <Text style={styles.emptyText}>No farm plots available.</Text>
               ) : (
                 adminVisiblePlots.map((plot) => {
-                  const latestPh =
-                    plotLatestPhMap[`plot_${plot.id}`] ||
-                    plotLatestPhMap[`sensor_${plot.sensor_id}`] ||
-                    (plot.records && plot.records.length > 0 ? plot.records[0].ph_level : (plot.sensors?.ph ?? 'N/A'));
-                 
-                  const isAcidic = !isNaN(parseFloat(latestPh)) && parseFloat(latestPh) < 5.5;
+                  const online = isPlotOnline(plot);
 
                   return (
                     <TouchableOpacity
@@ -447,7 +501,7 @@ export default function AdminScreen({
                       onPress={() => onSelectPlot?.(plot)}
                     >
                       <View style={styles.plotLeft}>
-                        <Ionicons name="leaf-outline" size={20} color="#15803d" style={styles.cropIcon} />
+                        <Ionicons name="leaf-outline" size={20} color="#10b981" style={styles.cropIcon} />
                         <View>
                           <Text style={styles.plotTitle}>{plot.name}</Text>
                           <Text style={styles.plotSubtitle}>{plot.crop_type || plot.crop || 'Crop N/A'}</Text>
@@ -455,17 +509,12 @@ export default function AdminScreen({
                       </View>
 
                       <View style={styles.plotRight}>
-                        <Text style={[
-                          styles.phText,
-                          { color: isAcidic ? '#ef4444' : '#15803d' }
-                        ]}>
-                          pH {latestPh}
-                        </Text>
-                        <Text style={styles.deviceStatusText}>
-                          {plot.sensor_id && plot.sensor_id !== 'N/A'
-                            ? (plot.status === 'Online' ? 'online' : 'offline')
-                            : 'no device'}
-                        </Text>
+                        <View style={[styles.statusBadge, { backgroundColor: online ? '#dcfce7' : '#f1f5f9' }]}>
+                          <View style={[styles.statusDot, { backgroundColor: online ? '#10b981' : '#94a3b8' }]} />
+                          <Text style={[styles.statusBadgeText, { color: online ? '#15803d' : '#64748b' }]}>
+                            {online ? 'ONLINE' : 'OFFLINE'}
+                          </Text>
+                        </View>
                       </View>
                     </TouchableOpacity>
                   );
@@ -478,6 +527,43 @@ export default function AdminScreen({
         {/* USERS SUB-TAB */}
         {activeSubTab === 'Users' && (
           <View style={styles.usersSection}>
+            {/* PENDING APPROVALS SECTION (DJANGO API PATCH WITH TOKEN) */}
+            {pendingActivationUsers.length > 0 && (
+              <View style={styles.pendingSectionCard}>
+                <View style={styles.pendingHeaderRow}>
+                  <Ionicons name="time-outline" size={20} color="#d97706" />
+                  <Text style={styles.pendingHeaderTitle}>Pending Account Approvals ({pendingActivationUsers.length})</Text>
+                </View>
+                <Text style={styles.pendingSubText}>
+                  Farmers registered under your account waiting for in-app approval:
+                </Text>
+
+                {pendingActivationUsers.map((pendingUser) => {
+                  const pName = pendingUser.name || `${pendingUser.first_name || ''} ${pendingUser.last_name || ''}`.trim() || pendingUser.username;
+                  return (
+                    <View key={pendingUser.id} style={styles.pendingUserItem}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.pendingUserName}>{pName} (@{pendingUser.username})</Text>
+                        <Text style={styles.pendingUserEmail}>{pendingUser.email}</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.approveBtn}
+                        onPress={async () => {
+                          const updated = await onUpdateUser?.(pendingUser.id, { is_active: true });
+                          if (updated) {
+                            Alert.alert('Success', `User @${pendingUser.username} has been approved and activated!`);
+                            await onRefreshData?.();
+                          }
+                        }}
+                      >
+                        <Text style={styles.approveBtnText}>Approve</Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
             <View style={styles.usersHeaderRow}>
               <Text style={styles.registeredCountText}>{adminVisibleUsers.length} managed users</Text>
               <TouchableOpacity style={styles.addUserBtn} onPress={handleOpenAddModal}>
@@ -509,7 +595,7 @@ export default function AdminScreen({
                   (currentAdminId && String(user.id) === String(currentAdminId)) ||
                   (currentAdminUsername && user.username === currentAdminUsername);
                
-                const isActive = user.is_active !== undefined ? user.is_active : user.status !== 'Inactive';
+                const isActive = user.is_active !== undefined ? user.is_active : true;
 
                 const userPlots = adminVisiblePlots.filter(
                   p => (p.farmer && String(p.farmer) === String(user.id)) || p.farmer_username === user.username
@@ -583,7 +669,11 @@ export default function AdminScreen({
                       <View style={styles.userCardActions}>
                         <TouchableOpacity
                           style={styles.deactivateBtn}
-                          onPress={() => onUpdateUser?.(user.id, { is_active: !isActive })}
+                          onPress={async () => {
+                            const newActiveState = !isActive;
+                            const updated = await onUpdateUser?.(user.id, { is_active: newActiveState });
+                            if (updated) await onRefreshData?.();
+                          }}
                         >
                           <Text style={styles.deactivateText}>
                             <Ionicons name="person-outline" size={14} /> {isActive ? 'Deactivate' : 'Activate'}
@@ -592,7 +682,11 @@ export default function AdminScreen({
 
                         <TouchableOpacity
                           style={styles.roleToggleBtn}
-                          onPress={() => onUpdateUser?.(user.id, { is_staff: role !== 'ADMIN' })}
+                          onPress={async () => {
+                            const newStaffState = role !== 'ADMIN';
+                            const updated = await onUpdateUser?.(user.id, { is_staff: newStaffState });
+                            if (updated) await onRefreshData?.();
+                          }}
                         >
                           <Text style={styles.roleToggleText}>
                             <Ionicons name="shield-checkmark" size={14} /> Switch to {role === 'ADMIN' ? 'Farmer' : 'Admin'}
@@ -614,7 +708,7 @@ export default function AdminScreen({
           </View>
         )}
 
-        {/* LOGS SUB-TAB */}
+        {/* LOGS SUB-TAB PLOT FOLDERS (POP-UP TRIGGER) */}
         {activeSubTab === 'Logs' && (
           <View style={styles.usersSection}>
             <View style={styles.usersHeaderRow}>
@@ -627,41 +721,140 @@ export default function AdminScreen({
 
             {loadingLogs ? (
               <ActivityIndicator size="large" color="#10b981" style={{ marginVertical: 30 }} />
-            ) : supabaseLogs.length === 0 ? (
+            ) : Object.keys(groupedLogs).length === 0 ? (
               <Text style={styles.emptyText}>No sensor telemetry logs recorded yet in soil_records.</Text>
             ) : (
-              supabaseLogs.map((log, index) => {
-                const logTime = log.timestamp ? new Date(log.timestamp).toLocaleString() : 'Recent';
+              Object.keys(groupedLogs).map((plotFolderName) => {
+                const logsInFolder = groupedLogs[plotFolderName] || [];
+
                 return (
-                  <View key={log.id || index} style={styles.userCard}>
-                    <View style={styles.userCardHeader}>
-                      <View style={[styles.userAvatarCircle, { backgroundColor: '#ecfdf5' }]}>
-                        <Ionicons name="pulse" size={18} color="#10b981" />
+                  <TouchableOpacity
+                    key={plotFolderName}
+                    style={styles.folderCard}
+                    onPress={() => handleOpenFolderModal(plotFolderName, logsInFolder)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.folderHeaderLeft}>
+                      <View style={styles.folderIconBadge}>
+                        <Ionicons name="folder" size={24} color="#10b981" />
                       </View>
                       <View style={{ flex: 1 }}>
-                        <View style={styles.userNameRow}>
-                          <Text style={styles.userName}>Sensor: {log.sensor_id || 'N/A'}</Text>
-                          <View style={[styles.roleBadge, { backgroundColor: '#f1f5f9' }]}>
-                            <Text style={[styles.roleBadgeText, { color: '#475569' }]}>Plot ID: {log.plot_id || 'Unassigned'}</Text>
-                          </View>
-                        </View>
-                        <Text style={styles.userEmail}>Time: {logTime}</Text>
-
-                        <View style={styles.plotTagRow}>
-                          <View style={styles.plotTag}><Text style={styles.plotTagText}>pH: {log.ph_level ?? log.ph ?? 'N/A'}</Text></View>
-                          <View style={styles.plotTag}><Text style={styles.plotTagText}>Moisture: {log.soil_moisture ?? log.moisture ?? 'N/A'}%</Text></View>
-                          <View style={styles.plotTag}><Text style={styles.plotTagText}>Temp: {log.soil_temperature ?? log.temp ?? 'N/A'}°C</Text></View>
-                          <View style={styles.plotTag}><Text style={styles.plotTagText}>Battery: {log.battery_percentage ?? log.battery ?? 'N/A'}%</Text></View>
-                        </View>
+                        <Text style={styles.folderTitleText}>{plotFolderName}</Text>
+                        <Text style={styles.folderSubtext}>{logsInFolder.length} Telemetry Records</Text>
                       </View>
                     </View>
-                  </View>
+                    <View style={styles.openFolderAction}>
+                      <Text style={styles.openFolderText}>View Logs</Text>
+                      <Ionicons name="chevron-forward" size={16} color="#10b981" />
+                    </View>
+                  </TouchableOpacity>
                 );
               })
             )}
           </View>
         )}
       </ScrollView>
+
+      {/* POP-UP MODAL: PLOT TELEMETRY LOGS */}
+      <Modal
+        visible={isFolderModalOpen}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setIsFolderModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '80%' }]}>
+            {/* Modal Header */}
+            <View style={styles.folderModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name="folder-open" size={24} color="#10b981" />
+                <Text style={styles.modalTitle}>{activeFolderData.name}</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsFolderModalOpen(false)}
+                style={styles.closeModalBtn}
+              >
+                <Ionicons name="close" size={22} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Modal Body: Telemetry Log List */}
+            <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 10 }}>
+              {activeFolderData.logs.length === 0 ? (
+                <Text style={styles.emptyText}>No logs found in this folder.</Text>
+              ) : (
+                activeFolderData.logs.map((log, index) => {
+                  const logTime = log.timestamp
+                    ? new Date(log.timestamp).toLocaleString()
+                    : 'Recent';
+
+                  // Extract values
+                  const phVal = log.ph_level ?? log.ph;
+                  const moistVal = log.soil_moisture ?? log.moisture;
+                  const tempVal = log.soil_temperature ?? log.temp;
+                  const battVal = log.battery_percentage ?? log.battery;
+
+                  // Color-coding evaluations
+                  const phSt = getPhStatus(phVal);
+                  const moistSt = getMoistureStatus(moistVal);
+                  const tempSt = getTempStatus(tempVal);
+                  const battSt = getBatteryStatus(battVal);
+
+                  return (
+                    <View key={log.id || index} style={styles.logSubCard}>
+                      <View style={styles.userCardHeader}>
+                        <View style={[styles.userAvatarCircle, { backgroundColor: '#ecfdf5' }]}>
+                          <Ionicons name="pulse" size={18} color="#10b981" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.userName}>Node ID: {log.sensor_id || 'N/A'}</Text>
+
+                          {/* Dynamic Color Chips */}
+                          <View style={styles.plotTagRow}>
+                            <View style={[styles.plotTag, { backgroundColor: phSt.bg, borderColor: phSt.border }]}>
+                              <Text style={[styles.plotTagText, { color: phSt.text }]}>
+                                pH: {phVal ?? 'N/A'}
+                              </Text>
+                            </View>
+
+                            <View style={[styles.plotTag, { backgroundColor: moistSt.bg, borderColor: moistSt.border }]}>
+                              <Text style={[styles.plotTagText, { color: moistSt.text }]}>
+                                Moisture: {moistVal !== undefined && moistVal !== null ? `${moistVal}%` : 'N/A'}
+                              </Text>
+                            </View>
+
+                            <View style={[styles.plotTag, { backgroundColor: tempSt.bg, borderColor: tempSt.border }]}>
+                              <Text style={[styles.plotTagText, { color: tempSt.text }]}>
+                                Temp: {tempVal !== undefined && tempVal !== null ? `${tempVal}°C` : 'N/A'}
+                              </Text>
+                            </View>
+
+                            <View style={[styles.plotTag, { backgroundColor: battSt.bg, borderColor: battSt.border }]}>
+                              <Text style={[styles.plotTagText, { color: battSt.text }]}>
+                                Battery: {battVal !== undefined && battVal !== null ? `${battVal}%` : 'N/A'}
+                              </Text>
+                            </View>
+                          </View>
+
+                          {/* Timestamp pinned to Lower-Right */}
+                          <Text style={styles.logTimeBottomRight}>{logTime}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[styles.modalSaveBtn, { marginTop: 16, alignSelf: 'stretch', alignItems: 'center' }]}
+              onPress={() => setIsFolderModalOpen(false)}
+            >
+              <Text style={styles.modalSaveText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Add / Edit User Modal */}
       <Modal visible={isModalOpen} transparent animationType="slide" onRequestClose={() => setIsModalOpen(false)}>
@@ -797,6 +990,16 @@ const styles = StyleSheet.create({
   searchIcon: { marginRight: 8, fontSize: 14 },
   searchInput: { flex: 1, fontSize: 13, color: '#0f172a' },
 
+  pendingSectionCard: { backgroundColor: '#fffbeb', borderWidth: 1, borderColor: '#fde68a', borderRadius: 16, padding: 14, marginBottom: 16 },
+  pendingHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  pendingHeaderTitle: { fontSize: 14, fontWeight: 'bold', color: '#b45309' },
+  pendingSubText: { fontSize: 12, color: '#78350f', marginBottom: 10 },
+  pendingUserItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#ffffff', padding: 10, borderRadius: 10, marginBottom: 8, borderWidth: 1, borderColor: '#fef3c7' },
+  pendingUserName: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
+  pendingUserEmail: { fontSize: 11, color: '#64748b' },
+  approveBtn: { backgroundColor: '#10b981', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  approveBtnText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold' },
+
   userCard: { backgroundColor: '#ffffff', borderRadius: 16, padding: 14, marginBottom: 12, elevation: 1, borderWidth: 1, borderColor: '#f1f5f9' },
   userCardHeader: { flexDirection: 'row', gap: 12 },
   userAvatarCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#f0fdf4', justifyContent: 'center', alignItems: 'center' },
@@ -816,8 +1019,8 @@ const styles = StyleSheet.create({
   assignedPlotsLabel: { fontSize: 11, fontWeight: 'bold', color: '#475569' },
   noPlotsText: { fontSize: 11, color: '#94a3b8', fontStyle: 'italic' },
   plotTagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
-  plotTag: { backgroundColor: '#ecfdf5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1, borderColor: '#a7f3d0' },
-  plotTagText: { fontSize: 10, color: '#047857', fontWeight: '500' },
+  plotTag: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1 },
+  plotTagText: { fontSize: 10, fontWeight: '600' },
 
   userCardActions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#f8fafc' },
   deactivateBtn: { backgroundColor: '#fff7ed', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, flex: 1, alignItems: 'center' },
@@ -836,16 +1039,9 @@ const styles = StyleSheet.create({
   sectionCard: { backgroundColor: '#ffffff', marginHorizontal: 16, marginTop: 16, borderRadius: 16, padding: 16, elevation: 2 },
   sectionCardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   refreshOverviewBtn: { flexDirection: 'row', alignItems: 'center' },
-  refreshOverviewText: { fontSize: 13, color: '#15803d', fontWeight: '700' },
+  refreshOverviewText: { fontSize: 13, color: '#10b981', fontWeight: '700' },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#0f172a' },
   emptyText: { color: '#94a3b8', fontStyle: 'italic', fontSize: 12 },
-  networkRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
-  networkInfo: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  statusDot: { width: 8, height: 8, borderRadius: 4 },
-  networkName: { fontSize: 13, fontWeight: '600', color: '#1e293b' },
-  networkMeta: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  statusBadgeText: { fontSize: 11, fontWeight: '600' },
 
   plotRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   plotLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -853,15 +1049,29 @@ const styles = StyleSheet.create({
   plotTitle: { fontSize: 14, fontWeight: 'bold', color: '#0f172a' },
   plotSubtitle: { fontSize: 12, color: '#64748b' },
   plotRight: { alignItems: 'flex-end' },
-  phText: { fontSize: 13, fontWeight: 'bold' },
-  deviceStatusText: { fontSize: 11, color: '#94a3b8' },
+  statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  statusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 5 },
+  statusBadgeText: { fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase' },
+
+  folderCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#ffffff', borderRadius: 16, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0', elevation: 1 },
+  folderHeaderLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 },
+  folderIconBadge: { width: 44, height: 44, borderRadius: 12, backgroundColor: '#ecfdf5', justifyContent: 'center', alignItems: 'center' },
+  folderTitleText: { fontSize: 15, fontWeight: 'bold', color: '#0f172a' },
+  folderSubtext: { fontSize: 11, color: '#64748b', marginTop: 2 },
+  openFolderAction: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  openFolderText: { fontSize: 12, color: '#10b981', fontWeight: 'bold' },
+
+  folderModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  closeModalBtn: { padding: 4 },
+  logSubCard: { backgroundColor: '#f8fafc', padding: 12, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' },
+  logTimeBottomRight: { fontSize: 10, color: '#64748b', alignSelf: 'flex-end', marginTop: 6, fontStyle: 'italic' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   modalContent: { backgroundColor: '#ffffff', borderRadius: 16, padding: 20, width: '100%', maxWidth: 400, maxHeight: '85%' },
-  modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a', marginBottom: 12 },
+  modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
   modalSectionLabel: { fontSize: 13, fontWeight: 'bold', color: '#334155', marginTop: 8, marginBottom: 6 },
   modalInput: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, marginBottom: 10, color: '#0f172a' },
- 
+
   plotChecklist: { marginBottom: 12, maxHeight: 150 },
   plotCheckItem: { flexDirection: 'row', alignItems: 'center', padding: 8, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, marginBottom: 6, backgroundColor: '#f8fafc' },
   plotCheckItemSelected: { backgroundColor: '#ecfdf5', borderColor: '#10b981' },

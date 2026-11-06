@@ -1,5 +1,3 @@
-// App.js
-
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Alert } from 'react-native';
 
@@ -12,9 +10,8 @@ import ProfileScreen from './screens/ProfileScreen';
 import AdminRegistrationScreen from './screens/AdminRegistrationScreen';
 import RegistrationScreen from './screens/RegistrationScreen';
 
-const BASE_URL = 'http://10.103.176.28:8000/api';
+const BASE_URL = 'http://10.92.77.28:8000/api';
 const AUTH_URL = `${BASE_URL}/api-token-auth/`;
-const REGISTER_URL = `${BASE_URL}/register/`;
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -175,31 +172,13 @@ export default function App() {
     });
   };
 
-  // -------------------- REGISTRATION --------------------
-  const handleRegister = async (formData) => {
-    try {
-      const response = await fetch(REGISTER_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify(formData),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        Alert.alert('Success', 'Account created successfully! Please log in.');
-        setCurrentScreen('Login');
-      } else {
-        const errorMsg = data.error || Object.values(data).flat().join('\n') || 'Registration failed';
-        Alert.alert('Registration Error', errorMsg);
-      }
-    } catch (error) {
-      console.error('Registration API Error:', error);
-      Alert.alert('Connection Error', 'Could not connect to the registration server.');
-    }
+  // -------------------- POST-OTP REGISTRATION SUCCESS HANDLER --------------------
+  const handleRegisterSuccess = (verifiedData) => {
+    Alert.alert(
+      'Account Verified',
+      'Your account was verified and created successfully. Please log in.'
+    );
+    setCurrentScreen('Login');
   };
 
   // -------------------- LOGIN --------------------
@@ -469,7 +448,7 @@ export default function App() {
         const errorData = await response.json();
         errorMessage = errorData.error || JSON.stringify(errorData);
       } catch {
-        // Keep fallback message if response is not JSON.
+        // Keep fallback message
       }
 
       Alert.alert('Delete Failed', errorMessage);
@@ -479,8 +458,80 @@ export default function App() {
     }
   };
 
+  // -------------------- CREATE USER --------------------
+  const handleAddUser = async (newUser) => {
+    if (!token) { Alert.alert('Authentication Error', 'Please log in again.'); return false; }
+    const nameParts = (newUser.name || '').trim().split(/\s+/).filter(Boolean);
+    const payload = {
+      username: (newUser.username || '').trim(), password: newUser.password,
+      first_name: nameParts.shift() || '', last_name: nameParts.join(' '),
+      email: (newUser.email || '').trim(), phone: newUser.phone || '',
+      is_staff: newUser.role === 'ADMIN', is_active: true,
+    };
+    try {
+      const response = await fetch(`${BASE_URL}/users/`, {
+        method: 'POST', headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = Object.entries(data).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : JSON.stringify(value)}`).join('\n') || `Server returned ${response.status}`;
+        Alert.alert('Create User Failed', message); return false;
+      }
+      await fetchUsers(token); await fetchPlots(token);
+      Alert.alert('Success', 'User account created successfully.'); return true;
+    } catch (error) {
+      console.error('Create User Error:', error); Alert.alert('Connection Error', 'Could not create the user.'); return false;
+    }
+  };
+
+  // -------------------- UPDATE USER --------------------
+  const handleUpdateUser = async (userId, updatedData) => {
+    if (!token) { Alert.alert('Authentication Error', 'Please log in again.'); return false; }
+    const payload = {};
+    ['username', 'email', 'phone', 'first_name', 'last_name', 'is_active', 'is_staff'].forEach((field) => {
+      if (updatedData[field] !== undefined) payload[field] = updatedData[field];
+    });
+    if (updatedData.name !== undefined) {
+      const nameParts = String(updatedData.name || '').trim().split(/\s+/).filter(Boolean);
+      payload.first_name = nameParts.shift() || ''; payload.last_name = nameParts.join(' ');
+    }
+    if (updatedData.role !== undefined) payload.is_staff = updatedData.role === 'ADMIN';
+    if (updatedData.password) payload.password = updatedData.password;
+    if (updatedData.old_password) payload.old_password = updatedData.old_password;
+    try {
+      const response = await fetch(`${BASE_URL}/users/${userId}/`, {
+        method: 'PATCH', headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = Object.entries(data).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : JSON.stringify(value)}`).join('\n') || `Server returned ${response.status}`;
+        Alert.alert('Update Failed', message); return false;
+      }
+      await fetchUsers(token); return true;
+    } catch (error) {
+      console.error('Update User Error:', error); Alert.alert('Connection Error', 'Could not update the user.'); return false;
+    }
+  };
+
+  // -------------------- DELETE USER --------------------
+  const handleDeleteUser = async (userId) => {
+    if (!token) return false;
+    try {
+      const response = await fetch(`${BASE_URL}/users/${userId}/`, { method: 'DELETE', headers: { Authorization: `Token ${token}`, Accept: 'application/json' } });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})); Alert.alert('Delete Failed', data.detail || `Server returned ${response.status}`); return false;
+      }
+      await fetchUsers(token); await fetchPlots(token); return true;
+    } catch (error) {
+      console.error('Delete User Error:', error); Alert.alert('Connection Error', 'Could not delete the user.'); return false;
+    }
+  };
+
   // -------------------- ASSIGN PLOTS --------------------
   const handleAssignPlots = async (userId, plotIds) => {
+    if (!token) return false;
     try {
       const response = await fetch(
         `${BASE_URL}/users/${userId}/assign-plots/`,
@@ -496,14 +547,16 @@ export default function App() {
       );
 
       if (response.ok) {
-        Alert.alert('Success', 'Plots successfully assigned!');
         await fetchPlots(token);
+        return true;
       } else {
         Alert.alert('Error', 'Failed to assign plots.');
+        return false;
       }
     } catch (error) {
       console.error('Assign Plots Error:', error);
       Alert.alert('Connection Error', 'Could not connect to the server.');
+      return false;
     }
   };
 
@@ -511,8 +564,9 @@ export default function App() {
   if (!user) {
     if (currentScreen === 'AdminRegister') {
       return (
-        <AdminRegistrationScreen
-          onRegister={handleRegister}
+        <RegistrationScreen
+          defaultRole="admin"
+          onRegister={handleRegisterSuccess}
           onBackToLogin={() => setCurrentScreen('Login')}
         />
       );
@@ -520,7 +574,8 @@ export default function App() {
     if (currentScreen === 'FarmerRegister') {
       return (
         <RegistrationScreen
-          onRegister={handleRegister}
+          defaultRole="user"
+          onRegister={handleRegisterSuccess}
           onBackToLogin={() => setCurrentScreen('Login')}
         />
       );
@@ -549,8 +604,12 @@ export default function App() {
           onDeletePlot={handleDeletePlot}
           onSelectPlot={handleSelectPlot}
           onAssignPlots={handleAssignPlots}
+          onAddUser={handleAddUser}
+          onUpdateUser={handleUpdateUser}
+          onDeleteUser={handleDeleteUser}
+          token={token}
           onOpenProfile={() => setCurrentScreen('Profile')}
-          onRefreshData={() => fetchPlots(token)}
+          onRefreshData={async () => { await fetchUsers(token); await fetchPlots(token); }}
           currentTab={getCurrentTabName()}
           onSelectTab={handleSelectTab}
           onLogout={handleLogout}
