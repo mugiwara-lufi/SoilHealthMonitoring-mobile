@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+// App.js
+
+import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, Alert } from 'react-native';
 
 import ExploreScreen from './screens/ExploreScreen';
@@ -20,6 +22,11 @@ export default function App() {
   const [plots, setPlots] = useState([]);
   const [selectedPlot, setSelectedPlot] = useState(null);
   const [usersList, setUsersList] = useState([]);
+
+  // App-level sensor assignments survive MonitorScreen unmounting/navigation.
+  // Django remains the persistent source across app restarts; this map protects
+  // the current session from stale fetch responses overwriting a recent change.
+  const sensorAssignmentOverrides = useRef({});
 
   // -------------------- FETCH USERS --------------------
   const fetchUsers = async (activeToken = token) => {
@@ -74,8 +81,18 @@ export default function App() {
             ? plot.records[0]
             : null;
 
+        const plotId = String(plot.id);
+        const hasLocalOverride = Object.prototype.hasOwnProperty.call(
+          sensorAssignmentOverrides.current,
+          plotId
+        );
+        const savedSensor = hasLocalOverride
+          ? sensorAssignmentOverrides.current[plotId]
+          : (plot.sensor_id && plot.sensor_id !== 'N/A' ? plot.sensor_id : null);
+        const activeSensor = savedSensor || null;
+
         return {
-          id: String(plot.id),
+          id: plotId,
           name: plot.name || '',
           crop: plot.crop_type || plot.crop || '',
           crop_type: plot.crop_type || plot.crop || '',
@@ -84,16 +101,11 @@ export default function App() {
           owner_id: plot.owner_id ? String(plot.owner_id) : (plot.owner ? String(plot.owner) : null),
           owner_username: plot.owner_username || '',
           owner_email: plot.owner_email || '',
-          status:
-            plot.sensor_id &&
-            plot.sensor_id !== 'N/A' &&
-            latest
-              ? 'Online'
-              : 'Offline',
+          status: activeSensor ? 'Online' : 'Offline',
           icon: 'leaf',
           color: '#1b5e20',
           location: plot.location || 'N/A',
-          sensor_id: plot.sensor_id || null,
+          sensor_id: activeSensor,
           records: plot.records || [],
           sensors: {
             moisture: latest
@@ -125,15 +137,44 @@ export default function App() {
         };
       });
 
-      setPlots(formattedData);
+      setPlots((previousPlots) => {
+        // Preserve a recently changed sensor assignment if a request started
+        // before the PATCH completed and returned stale plot data.
+        return formattedData.map((freshPlot) => {
+          const previousPlot = previousPlots.find((p) => p.id === freshPlot.id);
+          const hasOverride = Object.prototype.hasOwnProperty.call(
+            sensorAssignmentOverrides.current,
+            freshPlot.id
+          );
+          const sensorId = hasOverride
+            ? sensorAssignmentOverrides.current[freshPlot.id]
+            : (freshPlot.sensor_id || previousPlot?.sensor_id || null);
+
+          return {
+            ...freshPlot,
+            sensor_id: sensorId,
+            status: sensorId ? 'Online' : 'Offline'
+          };
+        });
+      });
 
       setSelectedPlot((previousPlot) => {
         if (!previousPlot) return null;
-        return (
-          formattedData.find(
-            (plot) => plot.id === String(previousPlot.id)
-          ) || previousPlot
+        const matchedPlot = formattedData.find((plot) => plot.id === String(previousPlot.id));
+        if (!matchedPlot) return previousPlot;
+        const hasOverride = Object.prototype.hasOwnProperty.call(
+          sensorAssignmentOverrides.current,
+          String(previousPlot.id)
         );
+        const sensorId = hasOverride
+          ? sensorAssignmentOverrides.current[String(previousPlot.id)]
+          : (matchedPlot.sensor_id || previousPlot.sensor_id || null);
+
+        return {
+          ...matchedPlot,
+          sensor_id: sensorId,
+          status: sensorId ? 'Online' : 'Offline'
+        };
       });
     } catch (error) {
       console.error('Fetch Plots Error:', error);
@@ -158,15 +199,25 @@ export default function App() {
   const handleUpdatePlotSensor = (plotId, newSensorId) => {
     const updatedPlotIdStr = String(plotId);
 
+    // Store null as an explicit override too, so a stale API response cannot
+    // restore a sensor after the user disconnects it.
+    sensorAssignmentOverrides.current[updatedPlotIdStr] = newSensorId || null;
+
     setPlots((prevPlots) =>
       prevPlots.map((p) =>
-        p.id === updatedPlotIdStr ? { ...p, sensor_id: newSensorId } : p
+        p.id === updatedPlotIdStr
+          ? { ...p, sensor_id: newSensorId || null, status: newSensorId ? 'Online' : 'Offline' }
+          : p
       )
     );
 
     setSelectedPlot((prevPlot) => {
       if (prevPlot && prevPlot.id === updatedPlotIdStr) {
-        return { ...prevPlot, sensor_id: newSensorId };
+        return {
+          ...prevPlot,
+          sensor_id: newSensorId,
+          status: newSensorId ? 'Online' : 'Offline'
+        };
       }
       return prevPlot;
     });
@@ -249,6 +300,7 @@ export default function App() {
   const handleLogout = () => {
     setUser(null);
     setToken(null);
+    sensorAssignmentOverrides.current = {};
     setPlots([]);
     setUsersList([]);
     setSelectedPlot(null);
@@ -364,57 +416,14 @@ export default function App() {
     }
   };
 
-  // -------------------- ADD SENSOR --------------------
-  const handleAddSensor = async (plotId) => {
-    const generatedSensorId = `SN-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    try {
-      const response = await fetch(`${BASE_URL}/plots/${plotId}/`, {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Token ${token}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ sensor_id: generatedSensorId }),
-      });
-
-      if (response.ok) {
-        handleUpdatePlotSensor(plotId, generatedSensorId);
-        await fetchPlots(token);
-        Alert.alert('Success', `Sensor ${generatedSensorId} assigned.`);
-      } else {
-        Alert.alert('Error', 'Could not assign sensor to plot.');
-      }
-    } catch (error) {
-      console.error('Add Sensor Error:', error);
-      Alert.alert('Connection Error', 'Could not connect to the server.');
-    }
+  const handleAddSensor = async () => {
+    Alert.alert('Use Monitor', 'Connect a physical sensor from the Monitor screen.');
+    return false;
   };
 
-  // -------------------- REMOVE SENSOR --------------------
-  const handleRemoveSensor = async (plotId) => {
-    try {
-      const response = await fetch(`${BASE_URL}/plots/${plotId}/`, {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Token ${token}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ sensor_id: null }),
-      });
-
-      if (response.ok) {
-        handleUpdatePlotSensor(plotId, null);
-        await fetchPlots(token);
-      } else {
-        Alert.alert('Error', 'Could not remove sensor.');
-      }
-    } catch (error) {
-      console.error('Remove Sensor Error:', error);
-      Alert.alert('Connection Error', 'Could not connect to the server.');
-    }
+  const handleRemoveSensor = async () => {
+    Alert.alert('Use Monitor', 'Disconnect the sensor from the Monitor screen.');
+    return false;
   };
 
   // -------------------- DELETE PLOT --------------------

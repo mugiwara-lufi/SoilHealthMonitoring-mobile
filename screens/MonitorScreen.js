@@ -28,6 +28,9 @@ const SUPABASE_KEY = 'sb_publishable_cyQgbi_v02dkhswabEBWoQ_3exGPlaK';
 
 const bleManager = new BleManager();
 
+// Helper function to pause execution safely for BLE buffer timing
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export default function MonitorScreen({
   plotData,
   token,
@@ -63,7 +66,7 @@ export default function MonitorScreen({
   const [connecting, setConnecting] = useState(false);
   const [availableSensors, setAvailableSensors] = useState([]);
  
-  const [activeSensorId, setActiveSensorId] = useState(null);
+  const activeSensorId = plotData?.sensor_id && plotData.sensor_id !== 'N/A' ? plotData.sensor_id : null;
   const [supabaseLatestRecord, setSupabaseLatestRecord] = useState(null);
 
   // Custom Styled Card Alert State
@@ -104,13 +107,8 @@ export default function MonitorScreen({
     values: [5.2, 5.4, 5.6, 5.8, 5.9, 5.7, 5.6]
   });
 
-  useEffect(() => {
-    if (plotData?.sensor_id && plotData.sensor_id !== 'N/A') {
-      setActiveSensorId(plotData.sensor_id);
-    } else {
-      setActiveSensorId(null);
-    }
-  }, [plotData?.sensor_id]);
+  // The assigned sensor comes from App.js (the persistent parent state).
+  // MonitorScreen may unmount when navigating away, so it must not own this state.
 
   useEffect(() => {
     fetchAnalytics();
@@ -191,8 +189,8 @@ export default function MonitorScreen({
   const updateSupabaseFarmPlotSensor = async (plotId, newSensorId) => {
     if (!plotId) return;
     try {
-      await fetch(
-        `${SUPABASE_URL}/rest/v1/soil_api_farmplot?id=eq.${plotId}`,
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/soil_api_farmplot?id=eq.${encodeURIComponent(plotId)}`,
         {
           method: 'PATCH',
           headers: {
@@ -204,6 +202,10 @@ export default function MonitorScreen({
           body: JSON.stringify({ sensor_id: newSensorId })
         }
       );
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Supabase plot update failed (${response.status}): ${errorText}`);
+      }
     } catch (err) {
       console.log("Error updating Supabase soil_api_farmplot sensor_id:", err);
     }
@@ -212,7 +214,7 @@ export default function MonitorScreen({
   const updateSupabasePlotId = async (sensorId, plotId) => {
     if (!sensorId) return;
     try {
-      await fetch(
+      const response = await fetch(
         `${SUPABASE_URL}/rest/v1/soil_records?sensor_id=eq.${encodeURIComponent(sensorId)}`,
         {
           method: 'PATCH',
@@ -225,6 +227,10 @@ export default function MonitorScreen({
           body: JSON.stringify({ plot_id: plotId })
         }
       );
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Supabase telemetry update failed (${response.status}): ${errorText}`);
+      }
     } catch (err) {
       console.log("Error updating Supabase plot_id:", err);
     }
@@ -242,64 +248,74 @@ export default function MonitorScreen({
           const prevSensorId = activeSensorId;
           const plotId = plotData?.id;
 
-          setActiveSensorId(null);
-          setSupabaseLatestRecord(null);
-
-          if (prevSensorId) {
-            await updateSupabasePlotId(prevSensorId, null);
-
-            try {
-              await fetch(`${SUPABASE_URL}/rest/v1/device_commands`, {
-                method: 'POST',
-                headers: {
-                  'apikey': SUPABASE_KEY,
-                  'Authorization': `Bearer ${SUPABASE_KEY}`,
-                  'Content-Type': 'application/json',
-                  'Prefer': 'return=minimal'
-                },
-                body: JSON.stringify({
-                  sensor_id: prevSensorId,
-                  command: 'RESET_WIFI',
-                  status: 'PENDING'
-                })
-              });
-            } catch (cmdErr) {
-              console.log("Error sending Wi-Fi reset command to Supabase:", cmdErr);
-            }
-          }
-
-          if (plotId) {
-            await updateSupabaseFarmPlotSensor(plotId, null);
+          if (!plotId || !prevSensorId) {
+            showAlert({
+              title: 'Unable to Disconnect',
+              message: 'The plot ID or assigned sensor ID is missing. Please refresh and try again.',
+              type: 'danger'
+            });
+            return;
           }
 
           try {
-            if (plotId) {
-              const headers = {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
-              };
-              if (token) headers['Authorization'] = `Token ${token}`;
+            const headers = {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            };
+            if (token) headers.Authorization = `Token ${token}`;
 
-              await fetch(`${API_BASE_URL}/api/plots/${plotId}/`, {
-                method: 'PATCH',
-                headers,
-                body: JSON.stringify({ sensor_id: null }),
-              });
+            // Django owns the assignment and queues the device Wi-Fi reset.
+            // Do not PATCH /plots/<id>/ or create a duplicate reset command here.
+            const backendResponse = await fetch(`${API_BASE_URL}/api/sensors/disconnect/`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                sensor_id: prevSensorId,
+                plot_id: plotId,
+              }),
+            });
+
+            const responseText = await backendResponse.text();
+            let responseData = {};
+            try {
+              responseData = responseText ? JSON.parse(responseText) : {};
+            } catch {
+              responseData = { detail: responseText };
             }
+
+            if (!backendResponse.ok) {
+              throw new Error(
+                responseData.error ||
+                responseData.detail ||
+                `Django could not disconnect the sensor (${backendResponse.status}).`
+              );
+            }
+
+            setSupabaseLatestRecord(null);
+
+            // Best-effort telemetry metadata cleanup. The backend assignment
+            // has already been disconnected successfully at this point.
+            await updateSupabasePlotId(prevSensorId, null);
+            await updateSupabaseFarmPlotSensor(plotId, null);
+
+            if (onDisconnectSensor) onDisconnectSensor(plotId);
+            if (onRemoveSensor) onRemoveSensor(plotId);
+            if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, null);
+            if (onRefreshData) await onRefreshData();
+
+            showAlert({
+              title: 'Disconnected',
+              message: `Sensor ${prevSensorId} was disconnected. Its registration remains in your account inventory.`,
+              type: 'success'
+            });
           } catch (err) {
-            console.log("Error resetting sensor_id in backend DB:", err);
+            console.log('Error disconnecting sensor:', err);
+            showAlert({
+              title: 'Disconnect Failed',
+              message: err.message || 'Django could not disconnect this sensor. Please try again.',
+              type: 'danger'
+            });
           }
-
-          if (onDisconnectSensor) onDisconnectSensor(plotId);
-          if (onRemoveSensor) onRemoveSensor(plotId);
-          if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, null);
-          if (onRefreshData) onRefreshData();
-
-          showAlert({
-            title: 'Disconnected',
-            message: `Sensor ${prevSensorId} unlinked and retained safely inside your account inventory.`,
-            type: 'success'
-          });
         }
       });
       return;
@@ -309,125 +325,127 @@ export default function MonitorScreen({
     setShowSensorModal(true);
 
     try {
-      // 1. Fetch all plots globally to track taken sensors
-      const plotsRes = await fetch(`${SUPABASE_URL}/rest/v1/soil_api_farmplot?select=*`, {
-        method: 'GET',
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      const allPlots = await plotsRes.json();
-     
-      const takenSensorIds = new Set(
-        (Array.isArray(allPlots) ? allPlots : [])
-          .map(p => p.sensor_id)
-          .filter(sId => sId && sId !== 'N/A' && sId !== null)
-      );
+      if (!token || !plotData?.id) {
+        throw new Error('Your login session or plot ID is missing. Please sign in again.');
+      }
 
-      // 2. Resolve account-scoped user association boundaries
-      const safeUsersList = users || [];
-      const myAssociatedUsers = safeUsersList.filter((u) => {
-        const isSelf = (currentAdminId && String(u.id) === String(currentAdminId)) ||
-                       (currentAdminUsername && u.username === currentAdminUsername);
-        const isCreatedByMe = String(u.createdByAdminId) === String(currentAdminId) ||
-                              u.createdByAdminUsername === currentAdminUsername ||
-                              String(u.owner_id) === String(currentAdminId) ||
-                              (u.owner_username && u.owner_username === currentAdminUsername);
-        return isSelf || isCreatedByMe;
-      });
-      const visibleUserIds = new Set(myAssociatedUsers.map(u => String(u.id)));
-
-      // Extract plot IDs owned by this account scope
-      const myAccountPlotIds = new Set(
-        (Array.isArray(allPlots) ? allPlots : [])
-          .filter(p => {
-            const isMyPlot = String(p.farmer) === String(currentAdminId) || visibleUserIds.has(String(p.farmer));
-            return isMyPlot;
-          })
-          .map(p => String(p.id))
-      );
-
+      // Django is the source of truth for sensor ownership and assignment.
+      // Do not discover inventory from public Supabase telemetry records.
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=200`,
+        `${API_BASE_URL}/api/sensors/available/?plot_id=${encodeURIComponent(plotData.id)}`,
         {
           method: 'GET',
           headers: {
-            'apikey': SUPABASE_KEY,
-            'Authorization': `Bearer ${SUPABASE_KEY}`,
-            'Content-Type': 'application/json'
-          }
+            Authorization: `Token ${token}`,
+            Accept: 'application/json',
+          },
         }
       );
 
-      const records = await response.json();
-
-      if (Array.isArray(records) && records.length > 0) {
-        const uniqueSensorsMap = {};
-        records.forEach(rec => {
-          const sId = rec.sensor_id;
-          const pId = rec.plot_id;
-
-          // Scope check: Allow if sensor is unassigned globally OR was historically attached to this account's plots
-          const isUnassignedGlobally = !takenSensorIds.has(sId);
-          const belongsToMyAccountScope = pId && myAccountPlotIds.has(String(pId));
-
-          if (sId && sId !== 'N/A' && (isUnassignedGlobally || belongsToMyAccountScope) && !uniqueSensorsMap[sId]) {
-            uniqueSensorsMap[sId] = {
-              sensor_id: sId,
-              battery: rec.battery_percentage ?? rec.battery ?? 'N/A',
-              timestamp: rec.timestamp ? new Date(rec.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recent'
-            };
-          }
-        });
-        setAvailableSensors(Object.values(uniqueSensorsMap));
-      } else {
-        setAvailableSensors([]);
+      const responseText = await response.text();
+      let responseData = [];
+      try {
+        responseData = responseText ? JSON.parse(responseText) : [];
+      } catch {
+        throw new Error('The server returned an invalid available-sensors response.');
       }
+
+      if (!response.ok) {
+        throw new Error(
+          responseData.error || responseData.detail ||
+          `Could not load your sensors (${response.status}).`
+        );
+      }
+
+      // The backend only returns sensors configured by this exact account
+      // and not assigned to any plot.
+      setAvailableSensors(Array.isArray(responseData) ? responseData : []);
     } catch (error) {
-      console.log("Error fetching available sensors:", error);
+      console.log('Error fetching account-owned available sensors:', error);
+      setAvailableSensors([]);
+      showAlert({
+        title: 'Unable to Load Sensors',
+        message: error.message || 'Could not retrieve sensors for this account.',
+        type: 'danger',
+      });
     } finally {
       setConnecting(false);
     }
   };
 
   const handleSelectSensor = async (sensorId) => {
-    setShowSensorModal(false);
-    setActiveSensorId(sensorId);
-
     const plotId = plotData?.id;
-
-    await updateSupabasePlotId(sensorId, plotId);
-    await updateSupabaseFarmPlotSensor(plotId, sensorId);
-
-    try {
-      if (plotId) {
-        const headers = {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        };
-        if (token) headers['Authorization'] = `Token ${token}`;
-
-        await fetch(`${API_BASE_URL}/api/plots/${plotId}/`, {
-          method: 'PATCH',
-          headers,
-          body: JSON.stringify({ sensor_id: sensorId }),
-        });
-      }
-    } catch (err) {
-      console.log("Error updating backend sensor_id:", err);
+    if (!plotId || !sensorId) {
+      showAlert({
+        title: 'Unable to Link Sensor',
+        message: 'The plot or sensor ID is missing. Please refresh and try again.',
+        type: 'danger'
+      });
+      return;
     }
 
-    if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, sensorId);
-    await fetchSupabaseLiveRecord(sensorId);
-    if (onRefreshData) onRefreshData();
-   
-    showAlert({
-      title: 'Sensor Linked',
-      message: `Successfully linked ${sensorId} to ${currentPlot}`,
-      type: 'success'
-    });
+    setConnecting(true);
+    try {
+      // 1. Claim the sensor through the dedicated Django endpoint.
+      // The backend validates ownership/availability and updates BOTH
+      // SensorDevice.plot and FarmPlot.sensor_id in one transaction.
+      const headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      };
+      if (token) headers.Authorization = `Token ${token}`;
+
+      const backendResponse = await fetch(`${API_BASE_URL}/api/sensors/claim/`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          sensor_id: sensorId,
+          plot_id: plotId,
+        })
+      });
+
+      const responseText = await backendResponse.text();
+      let responseData = {};
+      try {
+        responseData = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        responseData = { detail: responseText };
+      }
+
+      if (!backendResponse.ok) {
+        throw new Error(
+          responseData.error ||
+          responseData.detail ||
+          `Django could not claim the sensor (${backendResponse.status}).`
+        );
+      }
+
+      // 2. Update App.js only after Django confirms the assignment.
+      if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, sensorId);
+
+      // 3. Keep Supabase telemetry metadata in sync on a best-effort basis.
+      await updateSupabaseFarmPlotSensor(plotId, sensorId);
+      await updateSupabasePlotId(sensorId, plotId);
+
+      setShowSensorModal(false);
+      await fetchSupabaseLiveRecord(sensorId);
+      if (onRefreshData) await onRefreshData();
+
+      showAlert({
+        title: 'Sensor Linked',
+        message: `Successfully linked ${sensorId} to ${currentPlot}. The assignment has been saved.`,
+        type: 'success'
+      });
+    } catch (error) {
+      console.log('Error linking sensor:', error);
+      showAlert({
+        title: 'Sensor Not Linked',
+        message: error.message || 'The sensor assignment could not be saved. Please try again.',
+        type: 'danger'
+      });
+    } finally {
+      setConnecting(false);
+    }
   };
 
   const startBleScan = () => {
@@ -471,16 +489,21 @@ export default function MonitorScreen({
       const base64Ssid = Buffer.from(wifiSsid).toString('base64');
       const base64Pass = Buffer.from(wifiPass).toString('base64');
 
+      // Write SSID
       await connectedDevice.writeCharacteristicWithResponseForService(
         SERVICE_UUID, SSID_CHAR_UUID, base64Ssid
       );
      
+      await delay(400);
+
+      // Write Password (triggers immediate ESP.restart() on ESP32)
       try {
         await connectedDevice.writeCharacteristicWithResponseForService(
           SERVICE_UUID, PASS_CHAR_UUID, base64Pass
         );
       } catch (passErr) {
-        console.log("Device rebooted as expected:", passErr.message);
+        // Expected drop due to device reboot
+        console.log("ESP32 rebooted on password write:", passErr.message);
       }
 
       showAlert({
@@ -492,7 +515,20 @@ export default function MonitorScreen({
       setWifiSsid('');
       setWifiPass('');
     } catch (err) {
-      showAlert({ title: 'Provisioning Error', message: err.message, type: 'danger' });
+      // Treat any BLE disconnect, cancel, or reset during provisioning as a successful reboot
+      const errLower = (err.message || "").toLowerCase();
+      if (errLower.includes("disconnect") || errLower.includes("cancel") || errLower.includes("reset") || errLower.includes("device")) {
+        showAlert({
+          title: 'Success',
+          message: 'Wi-Fi configuration sent! The ESP32 is rebooting and connecting to WiFi.',
+          type: 'success'
+        });
+        setShowWifiModal(false);
+        setWifiSsid('');
+        setWifiPass('');
+      } else {
+        showAlert({ title: 'Provisioning Error', message: err.message, type: 'danger' });
+      }
     } finally {
       setIsProvisioning(false);
     }

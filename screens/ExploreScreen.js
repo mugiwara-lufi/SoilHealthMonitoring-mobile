@@ -142,8 +142,14 @@ export default function ExploreScreen({
     const p = parseFloat(liveRec?.phosphorus ?? plot?.sensors?.phosphorus);
     const k = parseFloat(liveRec?.potassium ?? plot?.sensors?.potassium);
 
-    if (!hasSensor || (isNaN(ph) && isNaN(moisture))) {
+    if (!hasSensor) {
       return { label: 'OFFLINE', color: '#64748b' };
+    }
+
+    // A saved sensor assignment is not the same as a live telemetry reading.
+    // Keep the plot visibly assigned when its first reading has not arrived yet.
+    if (isNaN(ph) && isNaN(moisture)) {
+      return { label: 'SENSOR LINKED', color: '#2563eb' };
     }
 
     if (!isNaN(ph) && ph < 5.5) {
