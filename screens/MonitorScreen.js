@@ -11,7 +11,6 @@ import {
   Dimensions,
   ActivityIndicator,
   Modal,
-  Alert,
   TextInput
 } from 'react-native';
 import { BarChart, LineChart } from 'react-native-chart-kit';
@@ -21,7 +20,7 @@ import { Buffer } from 'buffer';
 import MobileFooter from '../components/MobileFooter';
 
 const screenWidth = Dimensions.get('window').width - 30;
-const API_BASE_URL = 'http://10.92.77.28:8000';
+const API_BASE_URL = 'http://10.25.7.28:8000';
 
 // Supabase Direct Credentials
 const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
@@ -39,7 +38,10 @@ export default function MonitorScreen({
   currentTab,
   onSelectTab,
   onBack,
-  onUpdatePlotSensor
+  onUpdatePlotSensor,
+  currentAdminId,
+  currentAdminUsername,
+  users = []
 }) {
   const currentPlot = plotData?.name || "Plot";
   const currentCrop = plotData?.crop || plotData?.crop_type || "Crop";
@@ -64,6 +66,35 @@ export default function MonitorScreen({
   const [activeSensorId, setActiveSensorId] = useState(null);
   const [supabaseLatestRecord, setSupabaseLatestRecord] = useState(null);
 
+  // Custom Styled Card Alert State
+  const [cardAlert, setCardAlert] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    type: 'info',
+    onConfirm: null,
+    showCancel: false,
+    confirmText: 'OK',
+    cancelText: 'Cancel'
+  });
+
+  const showAlert = ({ title, message, type = 'info', onConfirm = null, showCancel = false, confirmText = 'OK', cancelText = 'Cancel' }) => {
+    setCardAlert({
+      visible: true,
+      title,
+      message,
+      type,
+      onConfirm,
+      showCancel,
+      confirmText,
+      cancelText
+    });
+  };
+
+  const closeAlert = () => {
+    setCardAlert(prev => ({ ...prev, visible: false }));
+  };
+
   const [weeklyData, setWeeklyData] = useState({
     labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
     values: [4.0, 4.5, 5.5, 6.2, 6.5, 6.8, 7.6]
@@ -87,7 +118,6 @@ export default function MonitorScreen({
       fetchSupabaseLiveRecord(activeSensorId);
     }
 
-    // Auto-polling Supabase live records every 3 seconds
     const interval = setInterval(() => {
       if (activeSensorId) {
         fetchSupabaseLiveRecord(activeSensorId);
@@ -202,76 +232,76 @@ export default function MonitorScreen({
 
   const handleConnectOrDisconnect = async () => {
     if (hasSensor) {
-      Alert.alert(
-        "Disconnect Sensor",
-        `Are you sure you want to disconnect sensor "${activeSensorId}" from ${currentPlot}? This will reset the device's Wi-Fi settings.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Disconnect",
-            style: "destructive",
-            onPress: async () => {
-              const prevSensorId = activeSensorId;
-              const plotId = plotData?.id;
+      showAlert({
+        title: 'Disconnect Sensor',
+        message: `Are you sure you want to disconnect sensor "${activeSensorId}" from ${currentPlot}? This will reset the device's Wi-Fi settings.`,
+        type: 'danger',
+        showCancel: true,
+        confirmText: 'Disconnect',
+        onConfirm: async () => {
+          const prevSensorId = activeSensorId;
+          const plotId = plotData?.id;
 
-              setActiveSensorId(null);
-              setSupabaseLatestRecord(null);
+          setActiveSensorId(null);
+          setSupabaseLatestRecord(null);
 
-              if (prevSensorId) {
-                await updateSupabasePlotId(prevSensorId, null);
+          if (prevSensorId) {
+            await updateSupabasePlotId(prevSensorId, null);
 
-                try {
-                  await fetch(`${SUPABASE_URL}/rest/v1/device_commands`, {
-                    method: 'POST',
-                    headers: {
-                      'apikey': SUPABASE_KEY,
-                      'Authorization': `Bearer ${SUPABASE_KEY}`,
-                      'Content-Type': 'application/json',
-                      'Prefer': 'return=minimal'
-                    },
-                    body: JSON.stringify({
-                      sensor_id: prevSensorId,
-                      command: 'RESET_WIFI',
-                      status: 'PENDING'
-                    })
-                  });
-                } catch (cmdErr) {
-                  console.log("Error sending Wi-Fi reset command to Supabase:", cmdErr);
-                }
-              }
-
-              if (plotId) {
-                await updateSupabaseFarmPlotSensor(plotId, null);
-              }
-
-              try {
-                if (plotId) {
-                  const headers = {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                  };
-                  if (token) headers['Authorization'] = `Token ${token}`;
-
-                  await fetch(`${API_BASE_URL}/api/plots/${plotId}/`, {
-                    method: 'PATCH',
-                    headers,
-                    body: JSON.stringify({ sensor_id: null }),
-                  });
-                }
-              } catch (err) {
-                console.log("Error resetting sensor_id in backend DB:", err);
-              }
-
-              if (onDisconnectSensor) onDisconnectSensor(plotId);
-              if (onRemoveSensor) onRemoveSensor(plotId);
-              if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, null);
-              if (onRefreshData) onRefreshData();
-
-              Alert.alert("Disconnected", `Sensor ${prevSensorId} unlinked. Wi-Fi reset command transmitted.`);
+            try {
+              await fetch(`${SUPABASE_URL}/rest/v1/device_commands`, {
+                method: 'POST',
+                headers: {
+                  'apikey': SUPABASE_KEY,
+                  'Authorization': `Bearer ${SUPABASE_KEY}`,
+                  'Content-Type': 'application/json',
+                  'Prefer': 'return=minimal'
+                },
+                body: JSON.stringify({
+                  sensor_id: prevSensorId,
+                  command: 'RESET_WIFI',
+                  status: 'PENDING'
+                })
+              });
+            } catch (cmdErr) {
+              console.log("Error sending Wi-Fi reset command to Supabase:", cmdErr);
             }
           }
-        ]
-      );
+
+          if (plotId) {
+            await updateSupabaseFarmPlotSensor(plotId, null);
+          }
+
+          try {
+            if (plotId) {
+              const headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+              };
+              if (token) headers['Authorization'] = `Token ${token}`;
+
+              await fetch(`${API_BASE_URL}/api/plots/${plotId}/`, {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({ sensor_id: null }),
+              });
+            }
+          } catch (err) {
+            console.log("Error resetting sensor_id in backend DB:", err);
+          }
+
+          if (onDisconnectSensor) onDisconnectSensor(plotId);
+          if (onRemoveSensor) onRemoveSensor(plotId);
+          if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, null);
+          if (onRefreshData) onRefreshData();
+
+          showAlert({
+            title: 'Disconnected',
+            message: `Sensor ${prevSensorId} unlinked and retained safely inside your account inventory.`,
+            type: 'success'
+          });
+        }
+      });
       return;
     }
 
@@ -279,7 +309,8 @@ export default function MonitorScreen({
     setShowSensorModal(true);
 
     try {
-      const plotsRes = await fetch(`${SUPABASE_URL}/rest/v1/soil_api_farmplot?select=sensor_id`, {
+      // 1. Fetch all plots globally to track taken sensors
+      const plotsRes = await fetch(`${SUPABASE_URL}/rest/v1/soil_api_farmplot?select=*`, {
         method: 'GET',
         headers: {
           'apikey': SUPABASE_KEY,
@@ -287,15 +318,39 @@ export default function MonitorScreen({
           'Content-Type': 'application/json'
         }
       });
-      const plotsData = await plotsRes.json();
+      const allPlots = await plotsRes.json();
+     
       const takenSensorIds = new Set(
-        (Array.isArray(plotsData) ? plotsData : [])
+        (Array.isArray(allPlots) ? allPlots : [])
           .map(p => p.sensor_id)
-          .filter(sId => sId && sId !== 'N/A')
+          .filter(sId => sId && sId !== 'N/A' && sId !== null)
+      );
+
+      // 2. Resolve account-scoped user association boundaries
+      const safeUsersList = users || [];
+      const myAssociatedUsers = safeUsersList.filter((u) => {
+        const isSelf = (currentAdminId && String(u.id) === String(currentAdminId)) ||
+                       (currentAdminUsername && u.username === currentAdminUsername);
+        const isCreatedByMe = String(u.createdByAdminId) === String(currentAdminId) ||
+                              u.createdByAdminUsername === currentAdminUsername ||
+                              String(u.owner_id) === String(currentAdminId) ||
+                              (u.owner_username && u.owner_username === currentAdminUsername);
+        return isSelf || isCreatedByMe;
+      });
+      const visibleUserIds = new Set(myAssociatedUsers.map(u => String(u.id)));
+
+      // Extract plot IDs owned by this account scope
+      const myAccountPlotIds = new Set(
+        (Array.isArray(allPlots) ? allPlots : [])
+          .filter(p => {
+            const isMyPlot = String(p.farmer) === String(currentAdminId) || visibleUserIds.has(String(p.farmer));
+            return isMyPlot;
+          })
+          .map(p => String(p.id))
       );
 
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=100`,
+        `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=200`,
         {
           method: 'GET',
           headers: {
@@ -311,8 +366,14 @@ export default function MonitorScreen({
       if (Array.isArray(records) && records.length > 0) {
         const uniqueSensorsMap = {};
         records.forEach(rec => {
-          const sId = rec.sensor_id || "SENSOR_001";
-          if (!takenSensorIds.has(sId) && !uniqueSensorsMap[sId]) {
+          const sId = rec.sensor_id;
+          const pId = rec.plot_id;
+
+          // Scope check: Allow if sensor is unassigned globally OR was historically attached to this account's plots
+          const isUnassignedGlobally = !takenSensorIds.has(sId);
+          const belongsToMyAccountScope = pId && myAccountPlotIds.has(String(pId));
+
+          if (sId && sId !== 'N/A' && (isUnassignedGlobally || belongsToMyAccountScope) && !uniqueSensorsMap[sId]) {
             uniqueSensorsMap[sId] = {
               sensor_id: sId,
               battery: rec.battery_percentage ?? rec.battery ?? 'N/A',
@@ -361,7 +422,12 @@ export default function MonitorScreen({
     if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, sensorId);
     await fetchSupabaseLiveRecord(sensorId);
     if (onRefreshData) onRefreshData();
-    Alert.alert("Sensor Linked", `Successfully linked ${sensorId} to ${currentPlot}`);
+   
+    showAlert({
+      title: 'Sensor Linked',
+      message: `Successfully linked ${sensorId} to ${currentPlot}`,
+      type: 'success'
+    });
   };
 
   const startBleScan = () => {
@@ -388,7 +454,7 @@ export default function MonitorScreen({
 
   const configureDeviceWifi = async (device) => {
     if (!wifiSsid.trim() || !wifiPass.trim()) {
-      Alert.alert("Error", "Please enter both Wi-Fi SSID and Password.");
+      showAlert({ title: 'Error', message: 'Please enter both Wi-Fi SSID and Password.', type: 'warning' });
       return;
     }
 
@@ -417,12 +483,16 @@ export default function MonitorScreen({
         console.log("Device rebooted as expected:", passErr.message);
       }
 
-      Alert.alert("Success", "Wi-Fi configuration sent! The ESP32 is rebooting and connecting to WiFi.");
+      showAlert({
+        title: 'Success',
+        message: 'Wi-Fi configuration sent! The ESP32 is rebooting and connecting to WiFi.',
+        type: 'success'
+      });
       setShowWifiModal(false);
       setWifiSsid('');
       setWifiPass('');
     } catch (err) {
-      Alert.alert("Provisioning Error", err.message);
+      showAlert({ title: 'Provisioning Error', message: err.message, type: 'danger' });
     } finally {
       setIsProvisioning(false);
     }
@@ -850,13 +920,20 @@ export default function MonitorScreen({
               <TouchableOpacity
                 style={styles.restartDeviceBtn}
                 onPress={() => {
-                  Alert.alert('Restart Node', `Send restart command to node ${activeSensorId}?`, [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: 'Restart',
-                      onPress: () => Alert.alert("Command Sent", `Restart signal transmitted to node ${activeSensorId}`)
+                  showAlert({
+                    title: 'Restart Node',
+                    message: `Send restart command to node ${activeSensorId}?`,
+                    type: 'warning',
+                    showCancel: true,
+                    confirmText: 'Restart',
+                    onConfirm: () => {
+                      showAlert({
+                        title: 'Command Sent',
+                        message: `Restart signal transmitted to node ${activeSensorId}`,
+                        type: 'success'
+                      });
                     }
-                  ]);
+                  });
                 }}
               >
                 <Ionicons name="refresh-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
@@ -867,6 +944,70 @@ export default function MonitorScreen({
         </View>
 
       </ScrollView>
+
+      {/* CUSTOM DESIGNED CARD ALERT MODAL */}
+      <Modal
+        visible={cardAlert.visible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closeAlert}
+      >
+        <View style={styles.cardAlertOverlay}>
+          <View style={styles.cardAlertBox}>
+            <View style={[
+              styles.cardAlertIconBadge,
+              cardAlert.type === 'danger' && { backgroundColor: '#fee2e2' },
+              cardAlert.type === 'warning' && { backgroundColor: '#fef3c7' },
+              cardAlert.type === 'success' && { backgroundColor: '#dcfce7' },
+              cardAlert.type === 'info' && { backgroundColor: '#e0e7ff' },
+            ]}>
+              <Ionicons
+                name={
+                  cardAlert.type === 'danger' ? 'alert-circle' :
+                  cardAlert.type === 'warning' ? 'warning' :
+                  cardAlert.type === 'success' ? 'checkmark-circle' : 'information-circle'
+                }
+                size={28}
+                color={
+                  cardAlert.type === 'danger' ? '#ef4444' :
+                  cardAlert.type === 'warning' ? '#d97706' :
+                  cardAlert.type === 'success' ? '#10b981' : '#4338ca'
+                }
+              />
+            </View>
+
+            <Text style={styles.cardAlertTitle}>{cardAlert.title}</Text>
+            <Text style={styles.cardAlertMessage}>{cardAlert.message}</Text>
+
+            <View style={styles.cardAlertActions}>
+              {cardAlert.showCancel && (
+                <TouchableOpacity
+                  style={styles.cardAlertCancelBtn}
+                  onPress={closeAlert}
+                >
+                  <Text style={styles.cardAlertCancelText}>{cardAlert.cancelText}</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={[
+                  styles.cardAlertConfirmBtn,
+                  cardAlert.type === 'danger' && { backgroundColor: '#ef4444' },
+                  cardAlert.type === 'warning' && { backgroundColor: '#d97706' },
+                  !cardAlert.showCancel && { flex: 1 }
+                ]}
+                onPress={() => {
+                  const callback = cardAlert.onConfirm;
+                  closeAlert();
+                  if (callback) callback();
+                }}
+              >
+                <Text style={styles.cardAlertConfirmText}>{cardAlert.confirmText}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* SENSOR SELECTION POPUP MENU */}
       <Modal
@@ -892,7 +1033,7 @@ export default function MonitorScreen({
               <ActivityIndicator size="large" color="#22c55e" style={{ marginVertical: 30 }} />
             ) : availableSensors.length === 0 ? (
               <View style={styles.emptyStateContainer}>
-                <Text style={styles.emptyStateText}>No active sensors found in Supabase.</Text>
+                <Text style={styles.emptyStateText}>No available unassigned sensors found in your account.</Text>
               </View>
             ) : (
               <ScrollView style={{ maxHeight: 260, marginVertical: 10 }}>
@@ -1386,4 +1527,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   closeModalButtonText: { color: '#ffffff', fontWeight: 'bold', fontSize: 15 },
+
+  // Custom Card Alert Styles
+  cardAlertOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  cardAlertBox: { backgroundColor: '#ffffff', borderRadius: 20, padding: 22, width: '100%', maxWidth: 340, alignItems: 'center', elevation: 5 },
+  cardAlertIconBadge: { width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', marginBottom: 14 },
+  cardAlertTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a', textAlign: 'center', marginBottom: 6 },
+  cardAlertMessage: { fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, lineHeight: 18 },
+  cardAlertActions: { flexDirection: 'row', gap: 10, width: '100%' },
+  cardAlertCancelBtn: { flex: 1, backgroundColor: '#f1f5f9', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  cardAlertCancelText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
+  cardAlertConfirmBtn: { flex: 1, backgroundColor: '#10b981', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  cardAlertConfirmText: { fontSize: 13, fontWeight: 'bold', color: '#ffffff' }
 });

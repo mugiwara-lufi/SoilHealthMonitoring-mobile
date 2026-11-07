@@ -23,7 +23,7 @@ import {
 } from '@expo/vector-icons';
 import MobileFooter from '../components/MobileFooter';
 
-const BASE_URL = 'http://10.103.176.28:8000/api';
+const BASE_URL = 'http://10.25.7.28:8000/api';
 
 export default function ProfileScreen({
   user,

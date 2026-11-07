@@ -10,7 +10,7 @@ import ProfileScreen from './screens/ProfileScreen';
 import AdminRegistrationScreen from './screens/AdminRegistrationScreen';
 import RegistrationScreen from './screens/RegistrationScreen';
 
-const BASE_URL = 'http://10.92.77.28:8000/api';
+const BASE_URL = 'http://10.25.7.28:8000/api';
 const AUTH_URL = `${BASE_URL}/api-token-auth/`;
 
 export default function App() {

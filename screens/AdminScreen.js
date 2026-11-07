@@ -11,10 +11,9 @@ import {
   StatusBar,
   TextInput,
   Modal,
-  Alert,
+  ActivityIndicator,
   KeyboardAvoidingView,
-  Platform,
-  ActivityIndicator
+  Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -88,10 +87,40 @@ export default function AdminScreen({
   const [supabaseLogs, setSupabaseLogs] = useState([]);
   const [plotLatestPhMap, setPlotLatestPhMap] = useState({});
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [scopedAvailableSensors, setScopedAvailableSensors] = useState([]);
 
   // Folder Logs Pop-up Modal State
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
   const [activeFolderData, setActiveFolderData] = useState({ name: '', logs: [] });
+
+  // Custom Styled Card Alert State (Replaces Native OS Alerts)
+  const [cardAlert, setCardAlert] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    type: 'info', // 'info', 'success', 'warning', 'danger'
+    onConfirm: null,
+    showCancel: false,
+    confirmText: 'OK',
+    cancelText: 'Cancel'
+  });
+
+  const showAlert = ({ title, message, type = 'info', onConfirm = null, showCancel = false, confirmText = 'OK', cancelText = 'Cancel' }) => {
+    setCardAlert({
+      visible: true,
+      title,
+      message,
+      type,
+      onConfirm,
+      showCancel,
+      confirmText,
+      cancelText
+    });
+  };
+
+  const closeAlert = () => {
+    setCardAlert(prev => ({ ...prev, visible: false }));
+  };
 
   const safeUsers = users || [];
   const safePlots = plots || [];
@@ -119,15 +148,102 @@ export default function AdminScreen({
     assignedPlotIds: []
   });
 
+  // Base list of users associated with this admin
+  const allAdminAssociatedUsers = safeUsers.filter((u) => {
+    const isSelf = (currentAdminId && String(u.id) === String(currentAdminId)) ||
+                   (currentAdminUsername && u.username === currentAdminUsername);
+    const isCreatedByThisAdmin = String(u.createdByAdminId) === String(currentAdminId) ||
+                                 u.createdByAdminUsername === currentAdminUsername ||
+                                 String(u.owner_id) === String(currentAdminId) ||
+                                 (u.owner_username && u.owner_username === currentAdminUsername);
+    return isSelf || isCreatedByThisAdmin;
+  });
+
+  // PENDING USERS: Strictly inactive accounts waiting for activation
+  const pendingActivationUsers = allAdminAssociatedUsers.filter((u) => {
+    const isSelf = (currentAdminId && String(u.id) === String(currentAdminId)) ||
+                   (currentAdminUsername && u.username === currentAdminUsername);
+    const isActive = u.is_active !== undefined ? u.is_active : true;
+    return !isSelf && !isActive;
+  });
+
+  // MANAGED USERS: Strictly ACTIVE accounts (plus the admin themselves)
+  const adminVisibleUsers = allAdminAssociatedUsers.filter((u) => {
+    const isSelf = (currentAdminId && String(u.id) === String(currentAdminId)) ||
+                   (currentAdminUsername && u.username === currentAdminUsername);
+    const isActive = u.is_active !== undefined ? u.is_active : true;
+    return isSelf || isActive;
+  });
+
+  const adminVisiblePlots = safePlots.filter((p) => {
+    const isOwnerPlot = String(p.farmer) === String(currentAdminId) ||
+                        p.farmer_username === currentAdminUsername ||
+                        String(p.owner_id) === String(currentAdminId) ||
+                        (p.owner_username && p.owner_username === currentAdminUsername);
+   
+    const belongsToVisibleUser = adminVisibleUsers.some(
+      (u) => (p.farmer && String(u.id) === String(p.farmer)) || u.username === p.farmer_username
+    );
+
+    return isOwnerPlot || belongsToVisibleUser;
+  });
+
   useEffect(() => {
     fetchPlotLatestReadings();
+    fetchScopedAvailableSensors();
     if (activeSubTab === 'Logs') {
       fetchSoilLogsFromSupabase();
     }
   }, [activeSubTab, plots]);
 
+  // Account-scoped available sensors fetcher to prevent cross-account sensor leaks & flooding
+  const fetchScopedAvailableSensors = async () => {
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/soil_api_farmplot?select=*`,
+        {
+          method: 'GET',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      if (response.ok) {
+        const allPlots = await response.json();
+        if (Array.isArray(allPlots)) {
+          const visibleUserIds = new Set(adminVisibleUsers.map(u => String(u.id)));
+          const filtered = allPlots.filter(p => {
+            const isMyPlot = String(p.farmer) === String(currentAdminId) || visibleUserIds.has(String(p.farmer));
+            const isUnassigned = !p.sensor_id || p.sensor_id === 'N/A';
+            return isMyPlot && isUnassigned;
+          });
+          setScopedAvailableSensors(filtered);
+        }
+      }
+    } catch (err) {
+      console.log('Error fetching scoped available sensors:', err);
+    }
+  };
+
   const fetchPlotLatestReadings = async () => {
     try {
+      const plotsRes = await fetch(`${SUPABASE_URL}/rest/v1/soil_api_farmplot?select=sensor_id`, {
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      const plotsData = await plotsRes.json();
+      
+      const takenSensorIds = new Set(
+        (Array.isArray(plotsData) ? plotsData : [])
+          .map(p => p.sensor_id)
+          .filter(sId => sId && sId !== 'N/A' && sId !== null)
+      );
+
       const response = await fetch(
         `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.desc&limit=100`,
         {
@@ -148,7 +264,7 @@ export default function AdminScreen({
             const sId = rec.sensor_id;
             const pId = rec.plot_id;
 
-            if (rec) {
+            if (rec && !takenSensorIds.has(sId)) {
               if (sId && !phMap[`sensor_${sId}`]) {
                 phMap[`sensor_${sId}`] = rec;
               }
@@ -196,46 +312,7 @@ export default function AdminScreen({
     setIsFolderModalOpen(true);
   };
 
-  // Base list of users associated with this admin
-  const allAdminAssociatedUsers = safeUsers.filter((u) => {
-    const isSelf = (currentAdminId && String(u.id) === String(currentAdminId)) ||
-                   (currentAdminUsername && u.username === currentAdminUsername);
-    const isCreatedByThisAdmin = String(u.createdByAdminId) === String(currentAdminId) ||
-                                 u.createdByAdminUsername === currentAdminUsername ||
-                                 String(u.owner_id) === String(currentAdminId) ||
-                                 (u.owner_username && u.owner_username === currentAdminUsername);
-    return isSelf || isCreatedByThisAdmin;
-  });
-
-  // PENDING USERS: Strictly inactive accounts waiting for activation
-  const pendingActivationUsers = allAdminAssociatedUsers.filter((u) => {
-    const isSelf = (currentAdminId && String(u.id) === String(currentAdminId)) ||
-                   (currentAdminUsername && u.username === currentAdminUsername);
-    const isActive = u.is_active !== undefined ? u.is_active : true;
-    return !isSelf && !isActive;
-  });
-
-  // MANAGED USERS: Strictly ACTIVE accounts (plus the admin themselves)
-  const adminVisibleUsers = allAdminAssociatedUsers.filter((u) => {
-    const isSelf = (currentAdminId && String(u.id) === String(currentAdminId)) ||
-                   (currentAdminUsername && u.username === currentAdminUsername);
-    const isActive = u.is_active !== undefined ? u.is_active : true;
-    return isSelf || isActive;
-  });
-
-  const adminVisiblePlots = safePlots.filter((p) => {
-    const isOwnerPlot = String(p.farmer) === String(currentAdminId) ||
-                        p.farmer_username === currentAdminUsername ||
-                        String(p.owner_id) === String(currentAdminId) ||
-                        (p.owner_username && p.owner_username === currentAdminUsername);
-   
-    const belongsToVisibleUser = adminVisibleUsers.some(
-      (u) => (p.farmer && String(u.id) === String(p.farmer)) || u.username === p.farmer_username
-    );
-
-    return isOwnerPlot || belongsToVisibleUser;
-  });
-
+  // FULLY FUNCTIONAL SEARCH FILTER
   const filteredUsers = adminVisibleUsers.filter(u => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return true;
@@ -243,8 +320,17 @@ export default function AdminScreen({
     const username = (u.username || '').toLowerCase();
     const email = (u.email || '').toLowerCase();
     const name = (u.name || `${u.first_name || ''} ${u.last_name || ''}`).toLowerCase();
+    const role = (u.role || (u.is_staff || u.is_superuser ? 'admin' : 'farmer')).toLowerCase();
+    const isActive = u.is_active !== undefined ? u.is_active : true;
+    const statusStr = isActive ? 'active' : 'inactive';
 
-    return username.includes(query) || name.includes(query) || email.includes(query);
+    return (
+      username.includes(query) ||
+      name.includes(query) ||
+      email.includes(query) ||
+      role.includes(query) ||
+      statusStr.includes(query)
+    );
   });
 
   const totalPlots = adminVisiblePlots.length;
@@ -339,10 +425,19 @@ export default function AdminScreen({
   };
 
   const handleSaveUser = async () => {
-    if (!formData.username.trim()) { Alert.alert('Validation Error', 'Username is required.'); return; }
-    if (!editingUser && !formData.password.trim()) { Alert.alert('Validation Error', 'Password is required for new users.'); return; }
+    if (!formData.username.trim()) {
+      showAlert({ title: 'Validation Error', message: 'Username is required.', type: 'warning' });
+      return;
+    }
+    if (!editingUser && !formData.password.trim()) {
+      showAlert({ title: 'Validation Error', message: 'Password is required for new users.', type: 'warning' });
+      return;
+    }
     if (editingUser) {
-      if (!onUpdateUser) { Alert.alert('Error', 'User update handler is not connected.'); return; }
+      if (!onUpdateUser) {
+        showAlert({ title: 'Error', message: 'User update handler is not connected.', type: 'danger' });
+        return;
+      }
       const updated = await onUpdateUser(editingUser.id, {
         username: formData.username.trim(), name: formData.name,
         email: formData.email, phone: formData.phone, role: formData.role,
@@ -352,31 +447,35 @@ export default function AdminScreen({
         const assigned = await onAssignPlots(editingUser.id, formData.assignedPlotIds);
         if (!assigned) return;
       }
-      Alert.alert('Success', 'User information updated successfully.');
+      showAlert({ title: 'Success', message: 'User information updated successfully.', type: 'success' });
     } else {
-      if (!onAddUser) { Alert.alert('Error', 'User registration handler is not connected.'); return; }
+      if (!onAddUser) {
+        showAlert({ title: 'Error', message: 'User registration handler is not connected.', type: 'danger' });
+        return;
+      }
       const created = await onAddUser({
         ...formData, createdByAdminId: currentAdminId,
         createdByAdminUsername: currentAdminUsername, owner_email: loggedInAdmin?.email || '',
       });
       if (!created) return;
     }
-    await onRefreshData?.(); setIsModalOpen(false);
+    await onRefreshData?.();
+    setIsModalOpen(false);
   };
 
   const handleDeleteUser = (userId) => {
-    Alert.alert(
-      'Delete User',
-      'Are you sure you want to delete this user?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => onDeleteUser?.(userId)
-        }
-      ]
-    );
+    showAlert({
+      title: 'Delete User',
+      message: 'Are you sure you want to delete this user from the system?',
+      type: 'danger',
+      showCancel: true,
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        await onDeleteUser?.(userId);
+        await onRefreshData?.();
+        showAlert({ title: 'Deleted', message: 'User has been successfully removed.', type: 'success' });
+      }
+    });
   };
 
   return (
@@ -480,6 +579,7 @@ export default function AdminScreen({
                   style={styles.refreshOverviewBtn}
                   onPress={() => {
                     fetchPlotLatestReadings();
+                    fetchScopedAvailableSensors();
                     if (onRefreshData) onRefreshData();
                   }}
                 >
@@ -527,7 +627,7 @@ export default function AdminScreen({
         {/* USERS SUB-TAB */}
         {activeSubTab === 'Users' && (
           <View style={styles.usersSection}>
-            {/* PENDING APPROVALS SECTION (DJANGO API PATCH WITH TOKEN) */}
+            {/* PENDING APPROVALS SECTION */}
             {pendingActivationUsers.length > 0 && (
               <View style={styles.pendingSectionCard}>
                 <View style={styles.pendingHeaderRow}>
@@ -546,18 +646,52 @@ export default function AdminScreen({
                         <Text style={styles.pendingUserName}>{pName} (@{pendingUser.username})</Text>
                         <Text style={styles.pendingUserEmail}>{pendingUser.email}</Text>
                       </View>
-                      <TouchableOpacity
-                        style={styles.approveBtn}
-                        onPress={async () => {
-                          const updated = await onUpdateUser?.(pendingUser.id, { is_active: true });
-                          if (updated) {
-                            Alert.alert('Success', `User @${pendingUser.username} has been approved and activated!`);
-                            await onRefreshData?.();
-                          }
-                        }}
-                      >
-                        <Text style={styles.approveBtnText}>Approve</Text>
-                      </TouchableOpacity>
+                     
+                      {/* Action Buttons: Approve & Reject */}
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
+                        <TouchableOpacity
+                          style={styles.approveBtn}
+                          onPress={async () => {
+                            const updated = await onUpdateUser?.(pendingUser.id, { is_active: true });
+                            if (updated) {
+                              showAlert({
+                                title: 'Approved',
+                                message: `User @${pendingUser.username} has been approved and activated successfully!`,
+                                type: 'success'
+                              });
+                              await onRefreshData?.();
+                            }
+                          }}
+                        >
+                          <Text style={styles.approveBtnText}>Approve</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.rejectBtn}
+                          onPress={() => {
+                            showAlert({
+                              title: 'Reject Account',
+                              message: `Are you sure you want to reject and delete pending account @${pendingUser.username}?`,
+                              type: 'danger',
+                              showCancel: true,
+                              confirmText: 'Reject & Delete',
+                              onConfirm: async () => {
+                                const deleted = await onDeleteUser?.(pendingUser.id);
+                                if (deleted !== false) {
+                                  showAlert({
+                                    title: 'Account Rejected',
+                                    message: `Account @${pendingUser.username} has been rejected and removed.`,
+                                    type: 'success'
+                                  });
+                                  await onRefreshData?.();
+                                }
+                              }
+                            });
+                          }}
+                        >
+                          <Text style={styles.rejectBtnText}>Reject</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   );
                 })}
@@ -565,7 +699,7 @@ export default function AdminScreen({
             )}
 
             <View style={styles.usersHeaderRow}>
-              <Text style={styles.registeredCountText}>{adminVisibleUsers.length} managed users</Text>
+              <Text style={styles.registeredCountText}>Manage Users</Text>
               <TouchableOpacity style={styles.addUserBtn} onPress={handleOpenAddModal}>
                 <Text style={styles.addUserBtnText}>+ Add User</Text>
               </TouchableOpacity>
@@ -575,7 +709,7 @@ export default function AdminScreen({
               <Ionicons name="search" size={20} color="#94a3b8" style={styles.searchIcon} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search users..."
+                placeholder="Search users (e.g., admin, farmer, active)..."
                 placeholderTextColor="#94a3b8"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -583,7 +717,7 @@ export default function AdminScreen({
             </View>
 
             {filteredUsers.length === 0 ? (
-              <Text style={styles.emptyText}>No users created by you found.</Text>
+              <Text style={styles.emptyText}>No users found matching your search criteria.</Text>
             ) : (
               filteredUsers.map((user, idx) => {
                 const displayName = user.name ||
@@ -708,7 +842,7 @@ export default function AdminScreen({
           </View>
         )}
 
-        {/* LOGS SUB-TAB PLOT FOLDERS (POP-UP TRIGGER) */}
+        {/* LOGS SUB-TAB PLOT FOLDERS */}
         {activeSubTab === 'Logs' && (
           <View style={styles.usersSection}>
             <View style={styles.usersHeaderRow}>
@@ -755,6 +889,70 @@ export default function AdminScreen({
         )}
       </ScrollView>
 
+      {/* CUSTOM DESIGNED CARD ALERT MODAL */}
+      <Modal
+        visible={cardAlert.visible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closeAlert}
+      >
+        <View style={styles.cardAlertOverlay}>
+          <View style={styles.cardAlertBox}>
+            <View style={[
+              styles.cardAlertIconBadge,
+              cardAlert.type === 'danger' && { backgroundColor: '#fee2e2' },
+              cardAlert.type === 'warning' && { backgroundColor: '#fef3c7' },
+              cardAlert.type === 'success' && { backgroundColor: '#dcfce7' },
+              cardAlert.type === 'info' && { backgroundColor: '#e0e7ff' },
+            ]}>
+              <Ionicons
+                name={
+                  cardAlert.type === 'danger' ? 'alert-circle' :
+                  cardAlert.type === 'warning' ? 'warning' :
+                  cardAlert.type === 'success' ? 'checkmark-circle' : 'information-circle'
+                }
+                size={28}
+                color={
+                  cardAlert.type === 'danger' ? '#ef4444' :
+                  cardAlert.type === 'warning' ? '#d97706' :
+                  cardAlert.type === 'success' ? '#10b981' : '#4338ca'
+                }
+              />
+            </View>
+
+            <Text style={styles.cardAlertTitle}>{cardAlert.title}</Text>
+            <Text style={styles.cardAlertMessage}>{cardAlert.message}</Text>
+
+            <View style={styles.cardAlertActions}>
+              {cardAlert.showCancel && (
+                <TouchableOpacity
+                  style={styles.cardAlertCancelBtn}
+                  onPress={closeAlert}
+                >
+                  <Text style={styles.cardAlertCancelText}>{cardAlert.cancelText}</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={[
+                  styles.cardAlertConfirmBtn,
+                  cardAlert.type === 'danger' && { backgroundColor: '#ef4444' },
+                  cardAlert.type === 'warning' && { backgroundColor: '#d97706' },
+                  !cardAlert.showCancel && { flex: 1 }
+                ]}
+                onPress={() => {
+                  const callback = cardAlert.onConfirm;
+                  closeAlert();
+                  if (callback) callback();
+                }}
+              >
+                <Text style={styles.cardAlertConfirmText}>{cardAlert.confirmText}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* POP-UP MODAL: PLOT TELEMETRY LOGS */}
       <Modal
         visible={isFolderModalOpen}
@@ -764,7 +962,6 @@ export default function AdminScreen({
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { maxHeight: '80%' }]}>
-            {/* Modal Header */}
             <View style={styles.folderModalHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Ionicons name="folder-open" size={24} color="#10b981" />
@@ -778,7 +975,6 @@ export default function AdminScreen({
               </TouchableOpacity>
             </View>
 
-            {/* Modal Body: Telemetry Log List */}
             <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 10 }}>
               {activeFolderData.logs.length === 0 ? (
                 <Text style={styles.emptyText}>No logs found in this folder.</Text>
@@ -788,13 +984,11 @@ export default function AdminScreen({
                     ? new Date(log.timestamp).toLocaleString()
                     : 'Recent';
 
-                  // Extract values
                   const phVal = log.ph_level ?? log.ph;
                   const moistVal = log.soil_moisture ?? log.moisture;
                   const tempVal = log.soil_temperature ?? log.temp;
                   const battVal = log.battery_percentage ?? log.battery;
 
-                  // Color-coding evaluations
                   const phSt = getPhStatus(phVal);
                   const moistSt = getMoistureStatus(moistVal);
                   const tempSt = getTempStatus(tempVal);
@@ -809,7 +1003,6 @@ export default function AdminScreen({
                         <View style={{ flex: 1 }}>
                           <Text style={styles.userName}>Node ID: {log.sensor_id || 'N/A'}</Text>
 
-                          {/* Dynamic Color Chips */}
                           <View style={styles.plotTagRow}>
                             <View style={[styles.plotTag, { backgroundColor: phSt.bg, borderColor: phSt.border }]}>
                               <Text style={[styles.plotTagText, { color: phSt.text }]}>
@@ -836,7 +1029,6 @@ export default function AdminScreen({
                             </View>
                           </View>
 
-                          {/* Timestamp pinned to Lower-Right */}
                           <Text style={styles.logTimeBottomRight}>{logTime}</Text>
                         </View>
                       </View>
@@ -997,8 +1189,10 @@ const styles = StyleSheet.create({
   pendingUserItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#ffffff', padding: 10, borderRadius: 10, marginBottom: 8, borderWidth: 1, borderColor: '#fef3c7' },
   pendingUserName: { fontSize: 13, fontWeight: 'bold', color: '#0f172a' },
   pendingUserEmail: { fontSize: 11, color: '#64748b' },
-  approveBtn: { backgroundColor: '#10b981', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  approveBtn: { backgroundColor: '#10b981', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
   approveBtnText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold' },
+  rejectBtn: { backgroundColor: '#ef4444', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  rejectBtnText: { color: '#ffffff', fontSize: 12, fontWeight: 'bold' },
 
   userCard: { backgroundColor: '#ffffff', borderRadius: 16, padding: 14, marginBottom: 12, elevation: 1, borderWidth: 1, borderColor: '#f1f5f9' },
   userCardHeader: { flexDirection: 'row', gap: 12 },
@@ -1083,5 +1277,17 @@ const styles = StyleSheet.create({
   modalCancelBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: '#f1f5f9' },
   modalCancelText: { color: '#64748b', fontSize: 13, fontWeight: '600' },
   modalSaveBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: '#10b981' },
-  modalSaveText: { color: '#ffffff', fontSize: 13, fontWeight: '600' }
+  modalSaveText: { color: '#ffffff', fontSize: 13, fontWeight: '600' },
+
+  // Custom Card Alert Styles
+  cardAlertOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  cardAlertBox: { backgroundColor: '#ffffff', borderRadius: 20, padding: 22, width: '100%', maxWidth: 340, alignItems: 'center', elevation: 5 },
+  cardAlertIconBadge: { width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', marginBottom: 14 },
+  cardAlertTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a', textAlign: 'center', marginBottom: 6 },
+  cardAlertMessage: { fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, lineHeight: 18 },
+  cardAlertActions: { flexDirection: 'row', gap: 10, width: '100%' },
+  cardAlertCancelBtn: { flex: 1, backgroundColor: '#f1f5f9', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  cardAlertCancelText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
+  cardAlertConfirmBtn: { flex: 1, backgroundColor: '#10b981', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  cardAlertConfirmText: { fontSize: 13, fontWeight: 'bold', color: '#ffffff' }
 });
