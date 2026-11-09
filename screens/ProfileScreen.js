@@ -12,18 +12,20 @@ import {
   Platform,
   Modal,
   TextInput,
-  Alert,
   KeyboardAvoidingView,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import {
   Feather,
   Ionicons,
   FontAwesome5,
 } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import MobileFooter from '../components/MobileFooter';
 
-const BASE_URL = 'http://10.25.7.28:8000/api';
+const BASE_URL = 'http://10.205.210.28:8000/api';
+const SERVER_ROOT = 'http://10.205.210.28:8000';
 
 export default function ProfileScreen({
   user,
@@ -41,6 +43,7 @@ export default function ProfileScreen({
   const [firstName, setFirstName] = useState(user?.first_name || '');
   const [lastName, setLastName] = useState(user?.last_name || '');
   const [phone, setPhone] = useState(user?.phone || '');
+  const [profileImage, setProfileImage] = useState(user?.profile_image || user?.avatar || null);
   const [savingProfile, setSavingProfile] = useState(false);
 
   // ---------- CHANGE PASSWORD MODAL STATE ----------
@@ -49,6 +52,38 @@ export default function ProfileScreen({
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
+
+  // ---------- PRIVACY POLICY MODAL STATE ----------
+  const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
+
+  // ---------- CUSTOM CARD ALERT STATE ----------
+  const [cardAlert, setCardAlert] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    type: 'info',
+    onConfirm: null,
+    showCancel: false,
+    confirmText: 'OK',
+    cancelText: 'Cancel'
+  });
+
+  const showAlert = ({ title, message, type = 'info', onConfirm = null, showCancel = false, confirmText = 'OK', cancelText = 'Cancel' }) => {
+    setCardAlert({
+      visible: true,
+      title,
+      message,
+      type,
+      onConfirm,
+      showCancel,
+      confirmText,
+      cancelText
+    });
+  };
+
+  const closeAlert = () => {
+    setCardAlert(prev => ({ ...prev, visible: false }));
+  };
 
   // Calculate assigned plots for this user (matching AdminScreen assignment logic)
   const userPlots = (plots || []).filter((p) => {
@@ -64,35 +99,83 @@ export default function ProfileScreen({
     setFirstName(user?.first_name || '');
     setLastName(user?.last_name || '');
     setPhone(user?.phone || '');
+    setProfileImage(user?.profile_image || user?.avatar || null);
     setIsEditProfileOpen(true);
+  };
+
+  // ---------- PICK IMAGE FROM PHONE GALLERY ----------
+  const handlePickImage = async () => {
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permissionResult.granted) {
+      showAlert({
+        title: 'Permission Required',
+        message: 'Permission to access camera roll is required!',
+        type: 'warning'
+      });
+      return;
+    }
+
+    const pickerResult = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!pickerResult.canceled && pickerResult.assets && pickerResult.assets.length > 0) {
+      setProfileImage(pickerResult.assets[0].uri);
+    }
   };
 
   // ---------- SAVE PROFILE CHANGES TO DATABASE ----------
   const handleSaveProfile = async () => {
     if (!firstName.trim()) {
-      Alert.alert('Validation Error', 'First name is required.');
+      showAlert({
+        title: 'Validation Error',
+        message: 'First name is required.',
+        type: 'warning'
+      });
       return;
     }
 
     setSavingProfile(true);
     const updatedFullName = `${firstName.trim()} ${lastName.trim()}`.trim();
+   
+    const formData = new FormData();
+    formData.append('first_name', firstName.trim());
+    formData.append('last_name', lastName.trim());
+    formData.append('name', updatedFullName);
+    formData.append('phone', phone.trim());
+
+    if (profileImage && !profileImage.startsWith('http') && profileImage.startsWith('file')) {
+      const uriParts = profileImage.split('.');
+      const fileType = uriParts[uriParts.length - 1];
+      formData.append('profile_image', {
+        uri: profileImage,
+        name: `profile_${user?.id || 'avatar'}.${fileType}`,
+        type: `image/${fileType}`,
+      });
+    }
+
     const payload = {
       first_name: firstName.trim(),
       last_name: lastName.trim(),
       name: updatedFullName,
       phone: phone.trim(),
+      profile_image: profileImage,
     };
 
     try {
       if (token && user?.id) {
+        const isMultipart = profileImage && !profileImage.startsWith('http') && profileImage.startsWith('file');
         const response = await fetch(`${BASE_URL}/users/${user.id}/`, {
           method: 'PATCH',
           headers: {
             Authorization: `Token ${token}`,
-            'Content-Type': 'application/json',
+            ...(isMultipart ? {} : { 'Content-Type': 'application/json' }),
             Accept: 'application/json',
           },
-          body: JSON.stringify(payload),
+          body: isMultipart ? formData : JSON.stringify(payload),
         });
 
         if (!response.ok) {
@@ -104,11 +187,19 @@ export default function ProfileScreen({
         onUpdateUser(user.id, payload);
       }
 
-      Alert.alert('Success', 'Profile details updated successfully!');
+      showAlert({
+        title: 'Success',
+        message: 'Profile details and picture updated successfully!',
+        type: 'success'
+      });
       setIsEditProfileOpen(false);
     } catch (error) {
       console.warn('Update Profile Error:', error);
-      Alert.alert('Error', 'Could not save profile changes. Please try again.');
+      showAlert({
+        title: 'Error',
+        message: 'Could not save profile changes. Please try again.',
+        type: 'danger'
+      });
     } finally {
       setSavingProfile(false);
     }
@@ -117,19 +208,35 @@ export default function ProfileScreen({
   // ---------- CHANGE PASSWORD IN DATABASE ----------
   const handleChangePassword = async () => {
     if (!oldPassword.trim()) {
-      Alert.alert('Validation Error', 'Please enter your current password.');
+      showAlert({
+        title: 'Validation Error',
+        message: 'Please enter your current password.',
+        type: 'warning'
+      });
       return;
     }
     if (!newPassword.trim()) {
-      Alert.alert('Validation Error', 'Please enter a new password.');
+      showAlert({
+        title: 'Validation Error',
+        message: 'Please enter a new password.',
+        type: 'warning'
+      });
       return;
     }
     if (newPassword.length < 6) {
-      Alert.alert('Validation Error', 'New password must be at least 6 characters long.');
+      showAlert({
+        title: 'Validation Error',
+        message: 'New password must be at least 6 characters long.',
+        type: 'warning'
+      });
       return;
     }
     if (newPassword !== confirmPassword) {
-      Alert.alert('Validation Error', 'New passwords do not match.');
+      showAlert({
+        title: 'Validation Error',
+        message: 'New passwords do not match.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -153,7 +260,6 @@ export default function ProfileScreen({
         const errData = await response.json();
 
         if (!response.ok) {
-          // Handle Django field error arrays cleanly without throwing an unhandled exception
           const errorMsg =
             (Array.isArray(errData.old_password) ? errData.old_password[0] : errData.old_password) ||
             (Array.isArray(errData.password) ? errData.password[0] : errData.password) ||
@@ -161,35 +267,34 @@ export default function ProfileScreen({
             errData.error ||
             'Password update failed.';
 
-          Alert.alert('Password Error', errorMsg);
+          showAlert({
+            title: 'Password Error',
+            message: errorMsg,
+            type: 'danger'
+          });
           return;
         }
       }
 
-      Alert.alert('Success', 'Your password has been changed successfully!');
+      showAlert({
+        title: 'Success',
+        message: 'Your password has been changed successfully!',
+        type: 'success'
+      });
       setOldPassword('');
       setNewPassword('');
       setConfirmPassword('');
       setIsChangePasswordOpen(false);
     } catch (error) {
       console.warn('Network Error:', error);
-      Alert.alert('Connection Error', 'Could not reach the server. Please try again.');
+      showAlert({
+        title: 'Connection Error',
+        message: 'Could not reach the server. Please try again.',
+        type: 'danger'
+      });
     } finally {
       setSavingPassword(false);
     }
-  };
-
-  // ---------- PRIVACY POLICY POPUP ----------
-  const handleOpenPrivacyPolicy = () => {
-    Alert.alert(
-      'Privacy Policy',
-      'JJMAP (Joint Soil Monitoring Application Platform) values your privacy.\n\n' +
-        '1. Data Collection: We collect soil telemetry data (pH, moisture, temperature, NPK) and basic account info.\n' +
-        '2. Usage: Your data is solely used to deliver real-time environmental alerts and soil monitoring.\n' +
-        '3. Protection: Security protocols ensure your farm details remain confidential.\n\n' +
-        'Contact support@jjmap.ph for questions.',
-      [{ text: 'Close', style: 'cancel' }]
-    );
   };
 
   const firstNameVal = user?.first_name || '';
@@ -200,6 +305,15 @@ export default function ProfileScreen({
       : 'Not set';
 
   const userPhoneDisplay = phone || user?.phone || 'No phone added';
+ 
+  const getAbsoluteImageUrl = (url) => {
+    if (!url) return null;
+    if (url.startsWith('http') || url.startsWith('file:')) return url;
+    return `${SERVER_ROOT}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+
+  const rawAvatar = profileImage || user?.profile_image || user?.avatar;
+  const displayAvatar = getAbsoluteImageUrl(rawAvatar);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -221,7 +335,11 @@ export default function ProfileScreen({
             onPress={handleOpenEditProfile}
           >
             <View style={styles.avatarCircle}>
-              <Feather name="user" size={28} color="#15803d" />
+              {displayAvatar ? (
+                <Image source={{ uri: displayAvatar }} style={styles.avatarImage} />
+              ) : (
+                <Feather name="user" size={28} color="#15803d" />
+              )}
             </View>
 
             <View style={styles.profileInfo}>
@@ -302,7 +420,7 @@ export default function ProfileScreen({
             <TouchableOpacity
               style={styles.rowItem}
               activeOpacity={0.7}
-              onPress={handleOpenPrivacyPolicy}
+              onPress={() => setIsPrivacyModalOpen(true)}
             >
               <View style={[styles.iconBox, { backgroundColor: '#f0f3ff' }]}>
                 <Ionicons name="shield-checkmark-outline" size={20} color="#6366f1" />
@@ -342,7 +460,136 @@ export default function ProfileScreen({
         </View>
       </ScrollView>
 
-      {/* ---------- EDIT PROFILE MODAL ---------- */}
+      {/* ---------- CUSTOM DESIGNED CARD ALERT MODAL ---------- */}
+      <Modal
+        visible={cardAlert.visible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closeAlert}
+      >
+        <View style={styles.cardAlertOverlay}>
+          <View style={styles.cardAlertBox}>
+            <View style={[
+              styles.cardAlertIconBadge,
+              cardAlert.type === 'danger' && { backgroundColor: '#fee2e2' },
+              cardAlert.type === 'warning' && { backgroundColor: '#fef3c7' },
+              cardAlert.type === 'success' && { backgroundColor: '#dcfce7' },
+              cardAlert.type === 'info' && { backgroundColor: '#e0e7ff' },
+            ]}>
+              <Ionicons
+                name={
+                  cardAlert.type === 'danger' ? 'alert-circle' :
+                  cardAlert.type === 'warning' ? 'warning' :
+                  cardAlert.type === 'success' ? 'checkmark-circle' : 'information-circle'
+                }
+                size={28}
+                color={
+                  cardAlert.type === 'danger' ? '#ef4444' :
+                  cardAlert.type === 'warning' ? '#d97706' :
+                  cardAlert.type === 'success' ? '#10b981' : '#4338ca'
+                }
+              />
+            </View>
+
+            <Text style={styles.cardAlertTitle}>{cardAlert.title}</Text>
+            <Text style={styles.cardAlertMessage}>{cardAlert.message}</Text>
+
+            <View style={styles.cardAlertActions}>
+              {cardAlert.showCancel && (
+                <TouchableOpacity
+                  style={styles.cardAlertCancelBtn}
+                  onPress={closeAlert}
+                >
+                  <Text style={styles.cardAlertCancelText}>{cardAlert.cancelText}</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={[
+                  styles.cardAlertConfirmBtn,
+                  cardAlert.type === 'danger' && { backgroundColor: '#ef4444' },
+                  cardAlert.type === 'warning' && { backgroundColor: '#d97706' },
+                  !cardAlert.showCancel && { flex: 1 }
+                ]}
+                onPress={() => {
+                  const callback = cardAlert.onConfirm;
+                  closeAlert();
+                  if (callback) callback();
+                }}
+              >
+                <Text style={styles.cardAlertConfirmText}>{cardAlert.confirmText}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ---------- CUSTOM CARD PRIVACY POLICY MODAL ---------- */}
+      <Modal
+        visible={isPrivacyModalOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsPrivacyModalOpen(false)}
+      >
+        <View style={styles.cardAlertOverlay}>
+          <View style={styles.privacyCardBox}>
+            <View style={styles.privacyHeaderRow}>
+              <Text style={styles.privacyModalTitle}>Privacy Policy</Text>
+              <TouchableOpacity
+                onPress={() => setIsPrivacyModalOpen(false)}
+                style={styles.privacyCloseBtn}
+              >
+                <Ionicons name="close" size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.privacyHighlightBox}>
+              <Text style={styles.privacyHighlightText}>
+                JJMAP (Joint Soil Monitoring Application Platform) respects your privacy and is committed to protecting your personal data.
+              </Text>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={styles.privacyScrollArea}>
+              <View style={styles.privacySection}>
+                <Text style={styles.privacySectionTitle}>1. Data Collection</Text>
+                <Text style={styles.privacySectionBody}>
+                  We collect soil data, sensor readings, and farm management information to provide our services.
+                </Text>
+              </View>
+
+              <View style={styles.privacySection}>
+                <Text style={styles.privacySectionTitle}>2. Data Usage</Text>
+                <Text style={styles.privacySectionBody}>
+                  Your data is used solely for soil monitoring, analysis, and providing farming recommendations.
+                </Text>
+              </View>
+
+              <View style={styles.privacySection}>
+                <Text style={styles.privacySectionTitle}>3. Data Security</Text>
+                <Text style={styles.privacySectionBody}>
+                  We implement industry-standard security measures to protect your information.
+                </Text>
+              </View>
+
+              <View style={styles.privacySection}>
+                <Text style={styles.privacySectionTitle}>4. Data Sharing</Text>
+                <Text style={styles.privacySectionBody}>
+                  We do not share your personal data with third parties without your explicit consent.
+                </Text>
+              </View>
+            </ScrollView>
+
+            <TouchableOpacity
+              style={styles.privacyCloseButton}
+              onPress={() => setIsPrivacyModalOpen(false)}
+            >
+              <Text style={styles.privacyCloseButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ---------- EDIT PROFILE MODAL (WITH PICTURE UPLOAD) ---------- */}
       <Modal
         visible={isEditProfileOpen}
         transparent
@@ -355,6 +602,23 @@ export default function ProfileScreen({
         >
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Edit Profile</Text>
+
+            {/* Profile Picture Picker Circle */}
+            <View style={{ alignItems: 'center', marginBottom: 15 }}>
+              <TouchableOpacity onPress={handlePickImage} style={styles.modalAvatarContainer}>
+                {displayAvatar ? (
+                  <Image source={{ uri: displayAvatar }} style={styles.modalAvatarImage} />
+                ) : (
+                  <Feather name="user" size={36} color="#15803d" />
+                )}
+                <View style={styles.cameraBadge}>
+                  <Feather name="camera" size={14} color="#ffffff" />
+                </View>
+              </TouchableOpacity>
+              <Text style={{ fontSize: 11, color: '#16a34a', fontWeight: '600', marginTop: 4 }}>
+                Tap to change profile picture
+              </Text>
+            </View>
 
             <Text style={styles.inputLabel}>First Name</Text>
             <TextInput
@@ -542,6 +806,36 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 15,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  modalAvatarContainer: {
+    width: 75,
+    height: 75,
+    borderRadius: 38,
+    backgroundColor: '#dcfce7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: '#16a34a',
+  },
+  modalAvatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  cameraBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    left: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingVertical: 3,
+    alignItems: 'center',
   },
   profileInfo: {
     flex: 1,
@@ -709,6 +1003,91 @@ const styles = StyleSheet.create({
     color: '#ef4444',
     fontSize: 16,
     fontWeight: '700',
+  },
+
+  // Custom Card Alert & Privacy Modal Styles
+  cardAlertOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  cardAlertBox: { backgroundColor: '#ffffff', borderRadius: 20, padding: 22, width: '100%', maxWidth: 340, alignItems: 'center', elevation: 5 },
+  cardAlertIconBadge: { width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', marginBottom: 14 },
+  cardAlertTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a', textAlign: 'center', marginBottom: 6 },
+  cardAlertMessage: { fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, lineHeight: 18 },
+  cardAlertActions: { flexDirection: 'row', gap: 10, width: '100%' },
+  cardAlertCancelBtn: { flex: 1, backgroundColor: '#f1f5f9', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  cardAlertCancelText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
+  cardAlertConfirmBtn: { flex: 1, backgroundColor: '#10b981', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  cardAlertConfirmText: { fontSize: 13, fontWeight: 'bold', color: '#ffffff' },
+
+  privacyCardBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 20,
+    width: '100%',
+    maxWidth: 380,
+    maxHeight: '80%',
+    elevation: 6,
+  },
+  privacyHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  privacyModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#0f172a',
+  },
+  privacyCloseBtn: {
+    padding: 4,
+  },
+  privacyHighlightBox: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#dcfce7',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 14,
+  },
+  privacyHighlightText: {
+    fontSize: 12,
+    color: '#166534',
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  privacyScrollArea: {
+    maxHeight: 280,
+    marginBottom: 14,
+  },
+  privacySection: {
+    marginBottom: 12,
+  },
+  privacySectionTitle: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#0f172a',
+    marginBottom: 2,
+  },
+  privacySectionBody: {
+    fontSize: 12,
+    color: '#64748b',
+    lineHeight: 17,
+  },
+  privacyCloseButton: {
+    backgroundColor: '#3f6212',
+    paddingVertical: 12,
+    borderRadius: 14,
+    alignItems: 'center',
+  },
+  privacyCloseButtonText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#ffffff',
   },
 
   // Modal Styles

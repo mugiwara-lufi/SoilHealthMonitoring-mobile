@@ -12,7 +12,7 @@ import ProfileScreen from './screens/ProfileScreen';
 import AdminRegistrationScreen from './screens/AdminRegistrationScreen';
 import RegistrationScreen from './screens/RegistrationScreen';
 
-const BASE_URL = 'http://10.25.7.28:8000/api';
+const BASE_URL = 'http://10.205.210.28:8000/api';
 const AUTH_URL = `${BASE_URL}/api-token-auth/`;
 
 export default function App() {
@@ -22,6 +22,7 @@ export default function App() {
   const [plots, setPlots] = useState([]);
   const [selectedPlot, setSelectedPlot] = useState(null);
   const [usersList, setUsersList] = useState([]);
+  const [loginError, setLoginError] = useState(false); // Tracks inline login failure state
 
   // App-level sensor assignments survive MonitorScreen unmounting/navigation.
   // Django remains the persistent source across app restarts; this map protects
@@ -138,8 +139,6 @@ export default function App() {
       });
 
       setPlots((previousPlots) => {
-        // Preserve a recently changed sensor assignment if a request started
-        // before the PATCH completed and returned stale plot data.
         return formattedData.map((freshPlot) => {
           const previousPlot = previousPlots.find((p) => p.id === freshPlot.id);
           const hasOverride = Object.prototype.hasOwnProperty.call(
@@ -199,8 +198,6 @@ export default function App() {
   const handleUpdatePlotSensor = (plotId, newSensorId) => {
     const updatedPlotIdStr = String(plotId);
 
-    // Store null as an explicit override too, so a stale API response cannot
-    // restore a sensor after the user disconnects it.
     sensorAssignmentOverrides.current[updatedPlotIdStr] = newSensorId || null;
 
     setPlots((prevPlots) =>
@@ -234,6 +231,7 @@ export default function App() {
 
   // -------------------- LOGIN --------------------
   const handleLogin = async (username, password) => {
+    setLoginError(false); // Reset previous login error state
     try {
       const response = await fetch(AUTH_URL, {
         method: 'POST',
@@ -247,12 +245,8 @@ export default function App() {
       const data = await response.json();
 
       if (!response.ok || !data.token) {
-        Alert.alert(
-          'Login Failed',
-          data.non_field_errors?.[0] ||
-            data.detail ||
-            'Invalid credentials'
-        );
+        // Removed native Alert.alert popup; setting inline error flag instead
+        setLoginError(true);
         return;
       }
 
@@ -276,6 +270,7 @@ export default function App() {
           : loggedUsername,
         email: data.email || `${loggedUsername}@jjmap.ph`,
         phone: data.phone || '',
+        profile_image: data.profile_image || null,
         role: isAdmin ? 'ADMIN' : 'FARMER',
         is_staff: isAdmin,
         is_active: true,
@@ -292,7 +287,7 @@ export default function App() {
       }
     } catch (error) {
       console.error('Login Error:', error);
-      Alert.alert('Error', 'Server unreachable. Check your backend connection.');
+      setLoginError(true); // Treat network / server reachability errors as invalid credentials/inline error
     }
   };
 
@@ -304,6 +299,7 @@ export default function App() {
     setPlots([]);
     setUsersList([]);
     setSelectedPlot(null);
+    setLoginError(false);
     setCurrentScreen('Login');
   };
 
@@ -593,6 +589,7 @@ export default function App() {
       <LoginScreen
         onLogin={handleLogin}
         onNavigateRegister={(screen) => setCurrentScreen(screen)}
+        loginError={loginError}
       />
     );
   }

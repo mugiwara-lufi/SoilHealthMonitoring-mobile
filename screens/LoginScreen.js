@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
-export default function LoginScreen({ onLogin, onNavigateRegister }) {
+export default function LoginScreen({ onLogin, onNavigateRegister, loginError }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -72,7 +72,7 @@ export default function LoginScreen({ onLogin, onNavigateRegister }) {
               {/* Username / Email Input */}
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Username or Email</Text>
-                <View style={styles.inputContainer}>
+                <View style={[styles.inputContainer, loginError && styles.errorInputBorder]}>
                   <Ionicons name="person-outline" size={20} color="#15803d" style={styles.inputIcon} />
                   <TextInput
                     style={styles.textInput}
@@ -89,7 +89,7 @@ export default function LoginScreen({ onLogin, onNavigateRegister }) {
               {/* Password Input */}
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Password</Text>
-                <View style={styles.inputContainer}>
+                <View style={[styles.inputContainer, loginError && styles.errorInputBorder]}>
                   <Ionicons name="lock-closed-outline" size={20} color="#15803d" style={styles.inputIcon} />
                   <TextInput
                     style={styles.textInput}
@@ -111,6 +111,10 @@ export default function LoginScreen({ onLogin, onNavigateRegister }) {
                     />
                   </TouchableOpacity>
                 </View>
+                {/* Inline Error Message */}
+                {loginError ? (
+                  <Text style={styles.errorText}>Invalid Credentials. Check your username and password.</Text>
+                ) : null}
               </View>
 
               {/* Submit Login Button */}
@@ -195,6 +199,7 @@ export default function LoginScreen({ onLogin, onNavigateRegister }) {
             </TouchableOpacity>
 
             <TouchableOpacity
+              pressRetentionOffset={20}
               onPress={() => setShowRoleModal(false)}
               style={styles.modalCancelBtn}
             >
@@ -314,6 +319,9 @@ const styles = StyleSheet.create({
     height: 52,
     paddingHorizontal: 14,
   },
+  errorInputBorder: {
+    borderColor: '#ef4444',
+  },
   inputIcon: {
     marginRight: 10,
   },
@@ -324,6 +332,13 @@ const styles = StyleSheet.create({
   },
   eyeIconBtn: {
     padding: 6,
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#ef4444',
+    marginTop: 6,
+    marginLeft: 4,
+    fontWeight: '500',
   },
   loginBtn: {
     height: 52,

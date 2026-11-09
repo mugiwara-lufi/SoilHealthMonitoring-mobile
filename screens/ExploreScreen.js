@@ -9,9 +9,10 @@ import {
   TouchableOpacity,
   SafeAreaView,
   TextInput,
-  Alert,
   ActivityIndicator,
-  Platform
+  Platform,
+  Image,
+  Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import MobileFooter from '../components/MobileFooter';
@@ -19,6 +20,9 @@ import MobileFooter from '../components/MobileFooter';
 // Supabase Direct Credentials
 const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_cyQgbi_v02dkhswabEBWoQ_3exGPlaK';
+
+// Add server root for mapping relative URLs from backend
+const SERVER_ROOT = 'http://10.205.210.28:8000';
 
 export default function ExploreScreen({
   user,
@@ -42,6 +46,35 @@ export default function ExploreScreen({
   // Live Telemetry Map from Supabase
   const [plotLatestTelemetryMap, setPlotLatestTelemetryMap] = useState({});
   const [loadingTelemetry, setLoadingTelemetry] = useState(false);
+
+  // Custom Styled Card Alert State (Replaces Native OS Alerts)
+  const [cardAlert, setCardAlert] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    type: 'info', // 'info', 'success', 'warning', 'danger'
+    onConfirm: null,
+    showCancel: false,
+    confirmText: 'OK',
+    cancelText: 'Cancel'
+  });
+
+  const showAlert = ({ title, message, type = 'info', onConfirm = null, showCancel = false, confirmText = 'OK', cancelText = 'Cancel' }) => {
+    setCardAlert({
+      visible: true,
+      title,
+      message,
+      type,
+      onConfirm,
+      showCancel,
+      confirmText,
+      cancelText
+    });
+  };
+
+  const closeAlert = () => {
+    setCardAlert(prev => ({ ...prev, visible: false }));
+  };
 
   const safeUsers = users || [];
   const loggedInAdmin = safeUsers.find(
@@ -107,6 +140,14 @@ export default function ExploreScreen({
   const activeUserIdStr = activeUser?.id ? String(activeUser.id) : null;
   const activeUsername = activeUser?.username || currentAdminUsername;
 
+  const getAbsoluteImageUrl = (url) => {
+    if (!url) return null;
+    if (url.startsWith('http') || url.startsWith('file:')) return url;
+    return `${SERVER_ROOT}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+  const rawAvatar = user?.profile_image || user?.avatar || activeUser?.profile_image || activeUser?.avatar;
+  const displayAvatar = getAbsoluteImageUrl(rawAvatar);
+
   const visiblePlots = (plots || []).filter(plot => {
     const plotOwnerEmail = plot?.owner_email ? String(plot.owner_email).toLowerCase().trim() : '';
     const currentAdminEmailClean = adminEmail ? String(adminEmail).toLowerCase().trim() : '';
@@ -146,8 +187,6 @@ export default function ExploreScreen({
       return { label: 'OFFLINE', color: '#64748b' };
     }
 
-    // A saved sensor assignment is not the same as a live telemetry reading.
-    // Keep the plot visibly assigned when its first reading has not arrived yet.
     if (isNaN(ph) && isNaN(moisture)) {
       return { label: 'SENSOR LINKED', color: '#2563eb' };
     }
@@ -191,10 +230,11 @@ export default function ExploreScreen({
     const location = newLocation.trim();
 
     if (!plotName || !cropType || !location) {
-      Alert.alert(
-        'Missing Information',
-        'Please enter the plot name, crop type, and location.'
-      );
+      showAlert({
+        title: 'Missing Information',
+        message: 'Please enter the plot name, crop type, and location.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -234,19 +274,23 @@ export default function ExploreScreen({
       }
     } catch (error) {
       console.error('Submit New Plot Error:', error);
-      Alert.alert('Error', 'Could not add the plot. Please try again.');
+      showAlert({
+        title: 'Error',
+        message: 'Could not add the plot. Please try again.',
+        type: 'danger'
+      });
     }
   };
 
   const confirmDelete = (id, name) => {
-    Alert.alert(
-      "Remove Plot",
-      `Are you sure you want to remove ${name}?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Remove", style: "destructive", onPress: () => onDeletePlot(id) }
-      ]
-    );
+    showAlert({
+      title: 'Remove Plot',
+      message: `Are you sure you want to remove ${name}?`,
+      type: 'danger',
+      showCancel: true,
+      confirmText: 'Remove',
+      onConfirm: () => onDeletePlot(id)
+    });
   };
 
   const renderPlotItem = ({ item }) => {
@@ -295,8 +339,13 @@ export default function ExploreScreen({
             <Text style={styles.headerTitle}>Farm Overview</Text>
             <Text style={styles.headerSubtitle}>Manage and monitor your farm plots</Text>
           </View>
+         
           <TouchableOpacity style={styles.profileBtn} onPress={onOpenProfile} activeOpacity={0.8}>
-            <Ionicons name="person-circle-outline" size={28} color="#ffffff" />
+            {displayAvatar ? (
+              <Image source={{ uri: displayAvatar }} style={{ width: 44, height: 44, borderRadius: 22 }} />
+            ) : (
+              <Ionicons name="person-circle-outline" size={28} color="#ffffff" />
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -379,6 +428,70 @@ export default function ExploreScreen({
           showsVerticalScrollIndicator={false}
         />
       )}
+
+      {/* CUSTOM DESIGNED CARD ALERT MODAL */}
+      <Modal
+        visible={cardAlert.visible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closeAlert}
+      >
+        <View style={styles.cardAlertOverlay}>
+          <View style={styles.cardAlertBox}>
+            <View style={[
+              styles.cardAlertIconBadge,
+              cardAlert.type === 'danger' && { backgroundColor: '#fee2e2' },
+              cardAlert.type === 'warning' && { backgroundColor: '#fef3c7' },
+              cardAlert.type === 'success' && { backgroundColor: '#dcfce7' },
+              cardAlert.type === 'info' && { backgroundColor: '#e0e7ff' },
+            ]}>
+              <Ionicons
+                name={
+                  cardAlert.type === 'danger' ? 'alert-circle' :
+                  cardAlert.type === 'warning' ? 'warning' :
+                  cardAlert.type === 'success' ? 'checkmark-circle' : 'information-circle'
+                }
+                size={28}
+                color={
+                  cardAlert.type === 'danger' ? '#ef4444' :
+                  cardAlert.type === 'warning' ? '#d97706' :
+                  cardAlert.type === 'success' ? '#10b981' : '#4338ca'
+                }
+              />
+            </View>
+
+            <Text style={styles.cardAlertTitle}>{cardAlert.title}</Text>
+            <Text style={styles.cardAlertMessage}>{cardAlert.message}</Text>
+
+            <View style={styles.cardAlertActions}>
+              {cardAlert.showCancel && (
+                <TouchableOpacity
+                  style={styles.cardAlertCancelBtn}
+                  onPress={closeAlert}
+                >
+                  <Text style={styles.cardAlertCancelText}>{cardAlert.cancelText}</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={[
+                  styles.cardAlertConfirmBtn,
+                  cardAlert.type === 'danger' && { backgroundColor: '#ef4444' },
+                  cardAlert.type === 'warning' && { backgroundColor: '#d97706' },
+                  !cardAlert.showCancel && { flex: 1 }
+                ]}
+                onPress={() => {
+                  const callback = cardAlert.onConfirm;
+                  closeAlert();
+                  if (callback) callback();
+                }}
+              >
+                <Text style={styles.cardAlertConfirmText}>{cardAlert.confirmText}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <MobileFooter currentTab={currentTab || 'Farm'} onSelectTab={onSelectTab} />
     </SafeAreaView>
@@ -489,5 +602,17 @@ const styles = StyleSheet.create({
   statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 12 },
   statusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 5 },
   statusText: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
-  emptyText: { textAlign: 'center', marginTop: 40, color: '#64748b', fontSize: 15 }
+  emptyText: { textAlign: 'center', marginTop: 40, color: '#64748b', fontSize: 15 },
+
+  // Custom Card Alert Styles
+  cardAlertOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  cardAlertBox: { backgroundColor: '#ffffff', borderRadius: 20, padding: 22, width: '100%', maxWidth: 340, alignItems: 'center', elevation: 5 },
+  cardAlertIconBadge: { width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', marginBottom: 14 },
+  cardAlertTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a', textAlign: 'center', marginBottom: 6 },
+  cardAlertMessage: { fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, lineHeight: 18 },
+  cardAlertActions: { flexDirection: 'row', gap: 10, width: '100%' },
+  cardAlertCancelBtn: { flex: 1, backgroundColor: '#f1f5f9', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  cardAlertCancelText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
+  cardAlertConfirmBtn: { flex: 1, backgroundColor: '#10b981', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  cardAlertConfirmText: { fontSize: 13, fontWeight: 'bold', color: '#ffffff' }
 });

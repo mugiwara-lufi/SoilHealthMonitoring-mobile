@@ -1,3 +1,5 @@
+// RegistrationScreen.js
+
 import React, { useState } from 'react';
 import {
   View,
@@ -9,13 +11,12 @@ import {
   Platform,
   SafeAreaView,
   ScrollView,
-  Alert,
   Modal,
   ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-const API_BASE_URL = 'http://10.25.7.28:8000/api';
+const API_BASE_URL = 'http://10.205.210.28:8000/api';
 
 export default function RegistrationScreen({ onRegister, onBackToLogin, defaultRole = 'user' }) {
   const isAdminRole = defaultRole === 'admin';
@@ -40,6 +41,35 @@ export default function RegistrationScreen({ onRegister, onBackToLogin, defaultR
   const [isSendingCode, setIsSendingCode] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
 
+  // ---------- CUSTOM CARD ALERT STATE ----------
+  const [cardAlert, setCardAlert] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    type: 'info',
+    onConfirm: null,
+    showCancel: false,
+    confirmText: 'OK',
+    cancelText: 'Cancel'
+  });
+
+  const showAlert = ({ title, message, type = 'info', onConfirm = null, showCancel = false, confirmText = 'OK', cancelText = 'Cancel' }) => {
+    setCardAlert({
+      visible: true,
+      title,
+      message,
+      type,
+      onConfirm,
+      showCancel,
+      confirmText,
+      cancelText
+    });
+  };
+
+  const closeAlert = () => {
+    setCardAlert(prev => ({ ...prev, visible: false }));
+  };
+
   // Step 1: Submit Form & Initiate Registration
   const handleInitiateRegistration = async () => {
     if (
@@ -49,17 +79,29 @@ export default function RegistrationScreen({ onRegister, onBackToLogin, defaultR
       !formData.email.trim() ||
       !formData.password.trim()
     ) {
-      Alert.alert('Validation Error', 'Please fill in all mandatory fields (*).');
+      showAlert({
+        title: 'Validation Error',
+        message: 'Please fill in all mandatory fields (*).',
+        type: 'warning'
+      });
       return;
     }
 
     if (formData.password.length < 6) {
-      Alert.alert('Weak Password', 'Password must be at least 6 characters long.');
+      showAlert({
+        title: 'Weak Password',
+        message: 'Password must be at least 6 characters long.',
+        type: 'warning'
+      });
       return;
     }
 
     if (formData.password !== formData.confirm_password) {
-      Alert.alert('Password Mismatch', 'Passwords do not match.');
+      showAlert({
+        title: 'Password Mismatch',
+        message: 'Passwords do not match.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -92,14 +134,22 @@ export default function RegistrationScreen({ onRegister, onBackToLogin, defaultR
       setShowModal(true);
     } catch (err) {
       setIsSendingCode(false);
-      Alert.alert('Registration Error', err.message || 'Server connection failed.');
+      showAlert({
+        title: 'Registration Error',
+        message: err.message || 'Server connection failed.',
+        type: 'danger'
+      });
     }
   };
 
   // Submit standard OTP verification code (for independent users or admins)
   const handleVerifyOtpSubmit = async () => {
     if (!otpInput.trim() || otpInput.trim().length !== 6) {
-      Alert.alert('Validation Error', 'Please enter a valid 6-digit code.');
+      showAlert({
+        title: 'Validation Error',
+        message: 'Please enter a valid 6-digit code.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -135,7 +185,11 @@ export default function RegistrationScreen({ onRegister, onBackToLogin, defaultR
       }
     } catch (err) {
       setIsVerifying(false);
-      Alert.alert('Verification Failed', err.message);
+      showAlert({
+        title: 'Verification Failed',
+        message: err.message,
+        type: 'danger'
+      });
     }
   };
 
@@ -282,6 +336,70 @@ export default function RegistrationScreen({ onRegister, onBackToLogin, defaultR
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* CUSTOM DESIGNED CARD ALERT MODAL */}
+      <Modal
+        visible={cardAlert.visible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closeAlert}
+      >
+        <View style={styles.cardAlertOverlay}>
+          <View style={styles.cardAlertBox}>
+            <View style={[
+              styles.cardAlertIconBadge,
+              cardAlert.type === 'danger' && { backgroundColor: '#fee2e2' },
+              cardAlert.type === 'warning' && { backgroundColor: '#fef3c7' },
+              cardAlert.type === 'success' && { backgroundColor: '#dcfce7' },
+              cardAlert.type === 'info' && { backgroundColor: '#e0e7ff' },
+            ]}>
+              <Ionicons
+                name={
+                  cardAlert.type === 'danger' ? 'alert-circle' :
+                  cardAlert.type === 'warning' ? 'warning' :
+                  cardAlert.type === 'success' ? 'checkmark-circle' : 'information-circle'
+                }
+                size={28}
+                color={
+                  cardAlert.type === 'danger' ? '#ef4444' :
+                  cardAlert.type === 'warning' ? '#d97706' :
+                  cardAlert.type === 'success' ? '#10b981' : '#4338ca'
+                }
+              />
+            </View>
+
+            <Text style={styles.cardAlertTitle}>{cardAlert.title}</Text>
+            <Text style={styles.cardAlertMessage}>{cardAlert.message}</Text>
+
+            <View style={styles.cardAlertActions}>
+              {cardAlert.showCancel && (
+                <TouchableOpacity
+                  style={styles.cardAlertCancelBtn}
+                  onPress={closeAlert}
+                >
+                  <Text style={styles.cardAlertCancelText}>{cardAlert.cancelText}</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={[
+                  styles.cardAlertConfirmBtn,
+                  cardAlert.type === 'danger' && { backgroundColor: '#ef4444' },
+                  cardAlert.type === 'warning' && { backgroundColor: '#d97706' },
+                  !cardAlert.showCancel && { flex: 1 }
+                ]}
+                onPress={() => {
+                  const callback = cardAlert.onConfirm;
+                  closeAlert();
+                  if (callback) callback();
+                }}
+              >
+                <Text style={styles.cardAlertConfirmText}>{cardAlert.confirmText}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* VERIFICATION / PENDING MODAL */}
       <Modal visible={showModal} transparent animationType="slide" onRequestClose={handleCloseModal}>
@@ -456,5 +574,17 @@ const styles = StyleSheet.create({
     marginBottom: 16
   },
   verifyBtnText: { color: '#ffffff', fontSize: 15, fontWeight: 'bold' },
-  cancelModalText: { fontSize: 13, color: '#64748b' }
+  cancelModalText: { fontSize: 13, color: '#64748b' },
+
+  // Custom Card Alert Styles
+  cardAlertOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  cardAlertBox: { backgroundColor: '#ffffff', borderRadius: 20, padding: 22, width: '100%', maxWidth: 340, alignItems: 'center', elevation: 5 },
+  cardAlertIconBadge: { width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', marginBottom: 14 },
+  cardAlertTitle: { fontSize: 18, fontWeight: 'bold', color: '#0f172a', textAlign: 'center', marginBottom: 6 },
+  cardAlertMessage: { fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, lineHeight: 18 },
+  cardAlertActions: { flexDirection: 'row', gap: 10, width: '100%' },
+  cardAlertCancelBtn: { flex: 1, backgroundColor: '#f1f5f9', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  cardAlertCancelText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
+  cardAlertConfirmBtn: { flex: 1, backgroundColor: '#10b981', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  cardAlertConfirmText: { fontSize: 13, fontWeight: 'bold', color: '#ffffff' }
 });

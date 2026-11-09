@@ -14,6 +14,7 @@
     "buffer": "^6.0.3",
     "expo": "~54.0.22",
     "expo-font": "~14.0.12",
+    "expo-image-picker": "~17.0.11",
     "expo-status-bar": "~3.0.8",
     "react": "19.1.0",
     "react-dom": "19.1.0",

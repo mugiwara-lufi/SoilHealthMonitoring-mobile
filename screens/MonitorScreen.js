@@ -1,6 +1,6 @@
 // screens/MonitorScreen.js
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   ScrollView,
   View,
@@ -20,7 +20,7 @@ import { Buffer } from 'buffer';
 import MobileFooter from '../components/MobileFooter';
 
 const screenWidth = Dimensions.get('window').width - 30;
-const API_BASE_URL = 'http://10.25.7.28:8000';
+const API_BASE_URL = 'http://10.205.210.28:8000';
 
 // Supabase Direct Credentials
 const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
@@ -69,6 +69,22 @@ export default function MonitorScreen({
   const activeSensorId = plotData?.sensor_id && plotData.sensor_id !== 'N/A' ? plotData.sensor_id : null;
   const [supabaseLatestRecord, setSupabaseLatestRecord] = useState(null);
 
+  // Telemetry History Records
+  const [historicalRecords, setHistoricalRecords] = useState([]);
+
+  // Functional Daily pH Bar Chart State
+  const [dailyPhChartData, setDailyPhChartData] = useState({
+    labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    values: [6.5, 6.6, 6.4, 6.7, 6.5, 6.8, 6.6],
+    colors: [(opacity = 1) => `rgba(37, 99, 235, ${opacity})`]
+  });
+
+  // Functional Hourly Line Chart State
+  const [hourlyData, setHourlyData] = useState({
+    labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', '24:00'],
+    values: [5.2, 5.4, 5.6, 5.8, 5.9, 5.7, 5.6]
+  });
+
   // Custom Styled Card Alert State
   const [cardAlert, setCardAlert] = useState({
     visible: false,
@@ -98,20 +114,40 @@ export default function MonitorScreen({
     setCardAlert(prev => ({ ...prev, visible: false }));
   };
 
-  const [weeklyData, setWeeklyData] = useState({
-    labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-    values: [4.0, 4.5, 5.5, 6.2, 6.5, 6.8, 7.6]
-  });
-  const [hourlyData, setHourlyData] = useState({
-    labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', '24:00'],
-    values: [5.2, 5.4, 5.6, 5.8, 5.9, 5.7, 5.6]
-  });
+  // Fetch telemetry history directly from Supabase for functional graphs
+  const fetchTelemetryHistory = useCallback(async () => {
+    if (!activeSensorId && !plotData?.id) return;
+    setLoadingCharts(true);
+    try {
+      let queryUrl = `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.asc&limit=300`;
+      if (activeSensorId) {
+        queryUrl = `${SUPABASE_URL}/rest/v1/soil_records?select=*&sensor_id=eq.${encodeURIComponent(activeSensorId)}&order=timestamp.asc&limit=300`;
+      } else if (plotData?.id) {
+        queryUrl = `${SUPABASE_URL}/rest/v1/soil_records?select=*&plot_id=eq.${encodeURIComponent(plotData.id)}&order=timestamp.asc&limit=300`;
+      }
 
-  // The assigned sensor comes from App.js (the persistent parent state).
-  // MonitorScreen may unmount when navigating away, so it must not own this state.
+      const response = await fetch(queryUrl, {
+        method: 'GET',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setHistoricalRecords(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.log("Error fetching telemetry history from Supabase:", err);
+    } finally {
+      setLoadingCharts(false);
+    }
+  }, [activeSensorId, plotData?.id]);
 
   useEffect(() => {
-    fetchAnalytics();
+    fetchTelemetryHistory();
     if (activeSensorId) {
       fetchSupabaseLiveRecord(activeSensorId);
     }
@@ -123,7 +159,94 @@ export default function MonitorScreen({
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [plotData?.id, activeSensorId]);
+  }, [plotData?.id, activeSensorId, fetchTelemetryHistory]);
+
+  // Process historical records into functional weekly pH averages & 24-hour trend line
+  useEffect(() => {
+    if (!historicalRecords || historicalRecords.length === 0) return;
+
+    // 1. Process Bar Chart (Soil pH Levels by Day)
+    const daysMap = { 0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat' };
+    const dayBuckets = { Mon: [], Tue: [], Wed: [], Thu: [], Fri: [], Sat: [], Sun: [] };
+    const orderedDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    historicalRecords.forEach(rec => {
+      if (!rec.timestamp) return;
+      const d = new Date(rec.timestamp);
+      const dayName = daysMap[d.getDay()];
+      const phVal = parseFloat(rec.ph_level ?? rec.ph);
+      if (!isNaN(phVal) && dayBuckets[dayName]) {
+        dayBuckets[dayName].push(phVal);
+      }
+    });
+
+    const barLabels = [];
+    const barValues = [];
+    const colorList = [];
+
+    orderedDays.forEach(day => {
+      const vals = dayBuckets[day];
+      barLabels.push(day);
+      if (vals.length > 0) {
+        const avgPh = vals.reduce((sum, v) => sum + v, 0) / vals.length;
+        const rounded = Number(avgPh.toFixed(1));
+        barValues.push(rounded);
+
+        // Agricultural threshold color coding
+        if (rounded < 5.5) {
+          colorList.push((opacity = 1) => `rgba(239, 68, 68, ${opacity})`); // Highly Acidic - Red
+        } else if (rounded <= 6.5) {
+          colorList.push((opacity = 1) => `rgba(249, 115, 22, ${opacity})`); // Mod. Acidic - Orange
+        } else if (rounded <= 7.5) {
+          colorList.push((opacity = 1) => `rgba(37, 99, 235, ${opacity})`); // Optimal - Blue
+        } else {
+          colorList.push((opacity = 1) => `rgba(59, 130, 246, ${opacity})`); // Alkaline - Light Blue
+        }
+      } else {
+        barValues.push(6.5);
+        colorList.push((opacity = 1) => `rgba(100, 116, 139, ${opacity})`);
+      }
+    });
+
+    setDailyPhChartData({
+      labels: barLabels,
+      values: barValues,
+      colors: colorList
+    });
+
+    // 2. Process Line Chart (pH Trend Over Time - Last 24 Hours)
+    const now = new Date();
+    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    
+    const recentRecords = historicalRecords.filter(rec => {
+      if (!rec.timestamp) return true;
+      return new Date(rec.timestamp) >= twentyFourHoursAgo;
+    });
+
+    const lineDataset = recentRecords.length > 0 ? recentRecords : historicalRecords.slice(-10);
+    const step = Math.max(1, Math.floor(lineDataset.length / 7));
+
+    const lineLabels = [];
+    const lineValues = [];
+
+    for (let i = 0; i < lineDataset.length; i += step) {
+      const rec = lineDataset[i];
+      const phVal = parseFloat(rec.ph_level ?? rec.ph);
+      if (!isNaN(phVal)) {
+        const d = rec.timestamp ? new Date(rec.timestamp) : new Date();
+        const timeString = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        lineLabels.push(timeString);
+        lineValues.push(Number(phVal.toFixed(1)));
+      }
+    }
+
+    if (lineValues.length > 0) {
+      setHourlyData({
+        labels: lineLabels,
+        values: lineValues
+      });
+    }
+  }, [historicalRecords]);
 
   const fetchSupabaseLiveRecord = async (targetSensorId) => {
     const sId = targetSensorId || activeSensorId;
@@ -158,25 +281,8 @@ export default function MonitorScreen({
     }
   };
 
-  const fetchAnalytics = async () => {
-    if (!plotData?.id) return;
-    setLoadingCharts(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/plots/${plotData.id}/ph-analytics/`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.weekly) setWeeklyData(data.weekly);
-        if (data.hourly) setHourlyData(data.hourly);
-      }
-    } catch (error) {
-      console.log("Error fetching pH analytics:", error);
-    } finally {
-      setLoadingCharts(false);
-    }
-  };
-
   const handleManualRefresh = () => {
-    fetchAnalytics();
+    fetchTelemetryHistory();
     fetchSupabaseLiveRecord(activeSensorId);
     if (onRefreshData) onRefreshData();
   };
@@ -264,8 +370,6 @@ export default function MonitorScreen({
             };
             if (token) headers.Authorization = `Token ${token}`;
 
-            // Django owns the assignment and queues the device Wi-Fi reset.
-            // Do not PATCH /plots/<id>/ or create a duplicate reset command here.
             const backendResponse = await fetch(`${API_BASE_URL}/api/sensors/disconnect/`, {
               method: 'POST',
               headers,
@@ -293,8 +397,6 @@ export default function MonitorScreen({
 
             setSupabaseLatestRecord(null);
 
-            // Best-effort telemetry metadata cleanup. The backend assignment
-            // has already been disconnected successfully at this point.
             await updateSupabasePlotId(prevSensorId, null);
             await updateSupabaseFarmPlotSensor(plotId, null);
 
@@ -329,8 +431,6 @@ export default function MonitorScreen({
         throw new Error('Your login session or plot ID is missing. Please sign in again.');
       }
 
-      // Django is the source of truth for sensor ownership and assignment.
-      // Do not discover inventory from public Supabase telemetry records.
       const response = await fetch(
         `${API_BASE_URL}/api/sensors/available/?plot_id=${encodeURIComponent(plotData.id)}`,
         {
@@ -357,8 +457,6 @@ export default function MonitorScreen({
         );
       }
 
-      // The backend only returns sensors configured by this exact account
-      // and not assigned to any plot.
       setAvailableSensors(Array.isArray(responseData) ? responseData : []);
     } catch (error) {
       console.log('Error fetching account-owned available sensors:', error);
@@ -386,9 +484,6 @@ export default function MonitorScreen({
 
     setConnecting(true);
     try {
-      // 1. Claim the sensor through the dedicated Django endpoint.
-      // The backend validates ownership/availability and updates BOTH
-      // SensorDevice.plot and FarmPlot.sensor_id in one transaction.
       const headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
@@ -420,15 +515,14 @@ export default function MonitorScreen({
         );
       }
 
-      // 2. Update App.js only after Django confirms the assignment.
       if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, sensorId);
 
-      // 3. Keep Supabase telemetry metadata in sync on a best-effort basis.
       await updateSupabaseFarmPlotSensor(plotId, sensorId);
       await updateSupabasePlotId(sensorId, plotId);
 
       setShowSensorModal(false);
       await fetchSupabaseLiveRecord(sensorId);
+      fetchTelemetryHistory();
       if (onRefreshData) await onRefreshData();
 
       showAlert({
@@ -489,20 +583,17 @@ export default function MonitorScreen({
       const base64Ssid = Buffer.from(wifiSsid).toString('base64');
       const base64Pass = Buffer.from(wifiPass).toString('base64');
 
-      // Write SSID
       await connectedDevice.writeCharacteristicWithResponseForService(
         SERVICE_UUID, SSID_CHAR_UUID, base64Ssid
       );
      
       await delay(400);
 
-      // Write Password (triggers immediate ESP.restart() on ESP32)
       try {
         await connectedDevice.writeCharacteristicWithResponseForService(
           SERVICE_UUID, PASS_CHAR_UUID, base64Pass
         );
       } catch (passErr) {
-        // Expected drop due to device reboot
         console.log("ESP32 rebooted on password write:", passErr.message);
       }
 
@@ -515,7 +606,6 @@ export default function MonitorScreen({
       setWifiSsid('');
       setWifiPass('');
     } catch (err) {
-      // Treat any BLE disconnect, cancel, or reset during provisioning as a successful reboot
       const errLower = (err.message || "").toLowerCase();
       if (errLower.includes("disconnect") || errLower.includes("cancel") || errLower.includes("reset") || errLower.includes("device")) {
         showAlert({
@@ -782,9 +872,10 @@ export default function MonitorScreen({
           </TouchableOpacity>
         </View>
 
+        {/* FUNCTIONAL SOIL PH LEVELS BY DAY BAR CHART */}
         <View style={styles.chartCard}>
           <Text style={styles.chartTitle}>Soil pH Levels by Day</Text>
-          <Text style={styles.chartSubtitle}>Weekly monitoring</Text>
+          <Text style={styles.chartSubtitle}>Weekly monitoring (Live Supabase Telemetry)</Text>
 
           {loadingCharts ? (
             <ActivityIndicator size="small" color="#2d6a4f" style={{ marginVertical: 30 }} />
@@ -792,8 +883,9 @@ export default function MonitorScreen({
             <>
               <BarChart
                 data={{
-                  labels: weeklyData.labels,
-                  datasets: [{ data: weeklyData.values }]
+                  labels: dailyPhChartData.labels,
+                  datasets: [{ data: dailyPhChartData.values }],
+                  colors: dailyPhChartData.colors
                 }}
                 width={screenWidth - 20}
                 height={200}
@@ -838,9 +930,10 @@ export default function MonitorScreen({
           )}
         </View>
 
+        {/* FUNCTIONAL PH TREND OVER TIME LINE CHART */}
         <View style={styles.chartCard}>
           <Text style={styles.chartTitle}>pH Trend Over Time</Text>
-          <Text style={styles.chartSubtitle}>Last 24 hours</Text>
+          <Text style={styles.chartSubtitle}>Last 24 hours (Live Supabase Telemetry)</Text>
 
           {loadingCharts ? (
             <ActivityIndicator size="small" color="#2d6a4f" style={{ marginVertical: 30 }} />
@@ -853,7 +946,7 @@ export default function MonitorScreen({
               width={screenWidth - 20}
               height={190}
               yAxisMin={4}
-              yAxisMax={8}
+              yAxisMax={14}
               chartConfig={{
                 backgroundColor: '#ffffff',
                 backgroundGradientFrom: '#ffffff',

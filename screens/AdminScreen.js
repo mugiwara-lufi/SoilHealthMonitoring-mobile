@@ -177,9 +177,9 @@ export default function AdminScreen({
 
   const adminVisiblePlots = safePlots.filter((p) => {
     const isOwnerPlot = String(p.farmer) === String(currentAdminId) ||
-                        p.farmer_username === currentAdminUsername ||
-                        String(p.owner_id) === String(currentAdminId) ||
-                        (p.owner_username && p.owner_username === currentAdminUsername);
+                            p.farmer_username === currentAdminUsername ||
+                            String(p.owner_id) === String(currentAdminId) ||
+                            (p.owner_username && p.owner_username === currentAdminUsername);
    
     const belongsToVisibleUser = adminVisibleUsers.some(
       (u) => (p.farmer && String(u.id) === String(p.farmer)) || u.username === p.farmer_username
@@ -237,7 +237,7 @@ export default function AdminScreen({
         }
       });
       const plotsData = await plotsRes.json();
-      
+     
       const takenSensorIds = new Set(
         (Array.isArray(plotsData) ? plotsData : [])
           .map(p => p.sensor_id)
@@ -298,7 +298,26 @@ export default function AdminScreen({
 
       if (response.ok) {
         const data = await response.json();
-        setSupabaseLogs(Array.isArray(data) ? data : []);
+        if (Array.isArray(data)) {
+          // Extract valid IDs and Sensor IDs visible to this admin/owner account
+          const visiblePlotIds = new Set(adminVisiblePlots.map(p => String(p.id)));
+          const visibleSensorIds = new Set(
+            adminVisiblePlots
+              .map(p => p.sensor_id)
+              .filter(sId => sId && sId !== 'N/A')
+          );
+
+          // Filter logs to strictly include only those belonging to this account's plots/sensors
+          const scopedLogs = data.filter(log => {
+            const matchesPlot = log.plot_id && visiblePlotIds.has(String(log.plot_id));
+            const matchesSensor = log.sensor_id && visibleSensorIds.has(String(log.sensor_id));
+            return matchesPlot || matchesSensor;
+          });
+
+          setSupabaseLogs(scopedLogs);
+        } else {
+          setSupabaseLogs([]);
+        }
       }
     } catch (err) {
       console.log('Error fetching soil logs:', err);
@@ -358,9 +377,9 @@ export default function AdminScreen({
     return !isNaN(phVal) && phVal < 5.5;
   }).length;
 
-  // Group Supabase Telemetry Logs by Plot Name
+  // Group Supabase Telemetry Logs by Plot Name (using only authorized visible plots)
   const groupedLogs = supabaseLogs.reduce((acc, log) => {
-    const matchedPlot = safePlots.find(
+    const matchedPlot = adminVisiblePlots.find(
       (p) =>
         (log.plot_id && String(p.id) === String(log.plot_id)) ||
         (log.sensor_id && String(p.sensor_id) === String(log.sensor_id))
