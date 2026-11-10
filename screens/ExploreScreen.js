@@ -22,7 +22,7 @@ const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_cyQgbi_v02dkhswabEBWoQ_3exGPlaK';
 
 // Add server root for mapping relative URLs from backend
-const SERVER_ROOT = 'http://10.205.210.28:8000';
+const SERVER_ROOT = 'http://10.175.38.28:8000';
 
 export default function ExploreScreen({
   user,

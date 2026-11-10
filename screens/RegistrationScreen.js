@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-const API_BASE_URL = 'http://10.205.210.28:8000/api';
+const API_BASE_URL = 'http://10.175.38.28:8000/api';
 
 export default function RegistrationScreen({ onRegister, onBackToLogin, defaultRole = 'user' }) {
   const isAdminRole = defaultRole === 'admin';

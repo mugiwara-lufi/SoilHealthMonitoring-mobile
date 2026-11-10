@@ -24,8 +24,8 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import MobileFooter from '../components/MobileFooter';
 
-const BASE_URL = 'http://10.205.210.28:8000/api';
-const SERVER_ROOT = 'http://10.205.210.28:8000';
+const BASE_URL = 'http://10.175.38.28:8000/api';
+const SERVER_ROOT = 'http://10.175.38.28:8000';
 
 export default function ProfileScreen({
   user,

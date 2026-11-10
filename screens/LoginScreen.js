@@ -16,11 +16,26 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
+// Must match BASE_URL in App.js (the /api prefix is included here).
+const API_BASE_URL = 'http://10.175.38.28:8000/api';
+
 export default function LoginScreen({ onLogin, onNavigateRegister, loginError }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showRoleModal, setShowRoleModal] = useState(false);
+
+  // Forgot-password modal state.
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [resetStage, setResetStage] = useState('email');
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetOtp, setResetOtp] = useState('');
+  const [resetToken, setResetToken] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState('');
+  const [resetMessage, setResetMessage] = useState('');
 
   const isFormValid = email.trim().length > 0 && password.trim().length > 0;
 
@@ -35,6 +50,133 @@ export default function LoginScreen({ onLogin, onNavigateRegister, loginError })
     if (onNavigateRegister) {
       onNavigateRegister(roleType);
     }
+  };
+
+  const openForgotPassword = () => {
+    setResetEmail(email.includes('@') ? email.trim() : '');
+    setResetOtp('');
+    setResetToken('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setResetStage('email');
+    setResetError('');
+    setResetMessage('');
+    setShowForgotModal(true);
+  };
+
+  const closeForgotPassword = () => {
+    if (resetLoading) return;
+    setShowForgotModal(false);
+    setResetError('');
+    setResetMessage('');
+  };
+
+  const sendResetRequest = async (endpoint, payload) => {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || data.detail || 'Request failed. Please try again.');
+    }
+    return data;
+  };
+
+  const handleSendResetOtp = async () => {
+    const normalizedEmail = resetEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setResetError('Please enter a valid email address.');
+      return;
+    }
+
+    setResetLoading(true);
+    setResetError('');
+    setResetMessage('');
+    try {
+      const data = await sendResetRequest('/password-reset/send-otp/', {
+        email: normalizedEmail,
+      });
+      setResetEmail(normalizedEmail);
+      setResetStage('otp');
+      setResetMessage(data.message || 'If an account exists for this email, a verification code has been sent.');
+    } catch (error) {
+      setResetError(error.message || 'Unable to send the verification code.');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const handleVerifyResetOtp = async () => {
+    if (!/^\d{6}$/.test(resetOtp.trim())) {
+      setResetError('Enter the 6-digit verification code.');
+      return;
+    }
+
+    setResetLoading(true);
+    setResetError('');
+    setResetMessage('');
+    try {
+      const data = await sendResetRequest('/password-reset/verify-otp/', {
+        email: resetEmail.trim().toLowerCase(),
+        otp: resetOtp.trim(),
+      });
+      setResetToken(data.reset_token || '');
+      setResetStage('password');
+      setResetMessage('Email verified. You can now create a new password.');
+    } catch (error) {
+      setResetError(error.message || 'The verification code is invalid or expired.');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const handleSaveNewPassword = async () => {
+    if (newPassword.length < 8) {
+      setResetError('Your new password must contain at least 8 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setResetError('The passwords do not match.');
+      return;
+    }
+    if (!resetToken) {
+      setResetError('Your password reset session has expired. Please start again.');
+      return;
+    }
+
+    setResetLoading(true);
+    setResetError('');
+    setResetMessage('');
+    try {
+      const data = await sendResetRequest('/password-reset/confirm/', {
+        email: resetEmail.trim().toLowerCase(),
+        reset_token: resetToken,
+        new_password: newPassword,
+      });
+      setResetStage('done');
+      setResetMessage(data.message || 'Your password has been changed. Please log in again.');
+      setPassword('');
+    } catch (error) {
+      setResetError(error.message || 'Unable to update your password.');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const restartPasswordReset = () => {
+    setResetStage('email');
+    setResetOtp('');
+    setResetToken('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setResetError('');
+    setResetMessage('');
   };
 
   return (
@@ -131,6 +273,15 @@ export default function LoginScreen({ onLogin, onNavigateRegister, loginError })
                 <Ionicons name="arrow-forward" size={18} color="#ffffff" style={{ marginLeft: 6 }} />
               </TouchableOpacity>
 
+              {/* Forgot Password link */}
+              <TouchableOpacity
+                onPress={openForgotPassword}
+                activeOpacity={0.7}
+                style={styles.forgotPasswordRow}
+              >
+                <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+              </TouchableOpacity>
+
               {/* Sign Up Redirect */}
               <View style={styles.signUpRow}>
                 <Text style={styles.signUpPrompt}>Don't have an account? </Text>
@@ -147,6 +298,172 @@ export default function LoginScreen({ onLogin, onNavigateRegister, loginError })
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Forgot Password Modal */}
+      <Modal
+        visible={showForgotModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closeForgotPassword}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.forgotModalContent}>
+            <View style={styles.modalBadge}>
+              <Ionicons
+                name={resetStage === 'done' ? 'checkmark-circle-outline' : 'lock-closed-outline'}
+                size={26}
+                color="#15803d"
+              />
+            </View>
+
+            <Text style={styles.modalTitle}>
+              {resetStage === 'email' ? 'Forgot Password?' :
+                resetStage === 'otp' ? 'Verify Your Email' :
+                resetStage === 'password' ? 'Create New Password' : 'Password Updated'}
+            </Text>
+            <Text style={styles.modalSubtitle}>
+              {resetStage === 'email'
+                ? 'Enter the email address registered to your JJMAP account.'
+                : resetStage === 'otp'
+                  ? `Enter the 6-digit code sent to ${resetEmail}.`
+                  : resetStage === 'password'
+                    ? 'Choose a new password for your account.'
+                    : 'Your password has been changed successfully. You can now log in with your new password.'}
+            </Text>
+
+            {resetStage === 'email' && (
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Email Address</Text>
+                <View style={styles.inputContainer}>
+                  <Ionicons name="mail-outline" size={20} color="#15803d" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    value={resetEmail}
+                    onChangeText={setResetEmail}
+                    placeholder="Enter your registered email"
+                    placeholderTextColor="#94a3b8"
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    autoCorrect={false}
+                  />
+                </View>
+              </View>
+            )}
+
+            {resetStage === 'otp' && (
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>6-Digit OTP</Text>
+                <View style={styles.inputContainer}>
+                  <Ionicons name="keypad-outline" size={20} color="#15803d" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    value={resetOtp}
+                    onChangeText={(value) => setResetOtp(value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="Enter verification code"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="number-pad"
+                    maxLength={6}
+                  />
+                </View>
+                <TouchableOpacity onPress={handleSendResetOtp} disabled={resetLoading}>
+                  <Text style={styles.resetSecondaryLink}>Resend code</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {resetStage === 'password' && (
+              <>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>New Password</Text>
+                  <View style={styles.inputContainer}>
+                    <Ionicons name="lock-closed-outline" size={20} color="#15803d" style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.textInput}
+                      value={newPassword}
+                      onChangeText={setNewPassword}
+                      placeholder="At least 8 characters"
+                      placeholderTextColor="#94a3b8"
+                      secureTextEntry
+                      autoCapitalize="none"
+                    />
+                  </View>
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Confirm New Password</Text>
+                  <View style={styles.inputContainer}>
+                    <Ionicons name="lock-closed-outline" size={20} color="#15803d" style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.textInput}
+                      value={confirmPassword}
+                      onChangeText={setConfirmPassword}
+                      placeholder="Re-enter your new password"
+                      placeholderTextColor="#94a3b8"
+                      secureTextEntry
+                      autoCapitalize="none"
+                    />
+                  </View>
+                </View>
+              </>
+            )}
+
+            {!!resetError && <Text style={styles.resetErrorText}>{resetError}</Text>}
+            {!!resetMessage && resetStage !== 'done' && (
+              <Text style={styles.resetMessageText}>{resetMessage}</Text>
+            )}
+
+            {resetStage === 'email' ? (
+              <TouchableOpacity
+                style={[styles.loginBtn, resetLoading && styles.disabledBtn]}
+                onPress={handleSendResetOtp}
+                disabled={resetLoading}
+              >
+                <Text style={styles.loginBtnText}>{resetLoading ? 'Sending...' : 'Send OTP'}</Text>
+              </TouchableOpacity>
+            ) : resetStage === 'otp' ? (
+              <TouchableOpacity
+                style={[styles.loginBtn, resetLoading && styles.disabledBtn]}
+                onPress={handleVerifyResetOtp}
+                disabled={resetLoading}
+              >
+                <Text style={styles.loginBtnText}>{resetLoading ? 'Verifying...' : 'Verify OTP'}</Text>
+              </TouchableOpacity>
+            ) : resetStage === 'password' ? (
+              <TouchableOpacity
+                style={[styles.loginBtn, resetLoading && styles.disabledBtn]}
+                onPress={handleSaveNewPassword}
+                disabled={resetLoading}
+              >
+                <Text style={styles.loginBtnText}>{resetLoading ? 'Updating...' : 'Update Password'}</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.loginBtn}
+                onPress={() => {
+                  closeForgotPassword();
+                  restartPasswordReset();
+                }}
+              >
+                <Text style={styles.loginBtnText}>Back to Login</Text>
+              </TouchableOpacity>
+            )}
+
+            {resetStage !== 'done' && (
+              <TouchableOpacity
+                onPress={resetStage === 'email' ? closeForgotPassword : restartPasswordReset}
+                disabled={resetLoading}
+                style={styles.modalCancelBtn}
+              >
+                <Text style={styles.modalCancelText}>
+                  {resetStage === 'email' ? 'Cancel' : 'Start Over'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* Account Type Selection Modal */}
       <Modal
@@ -362,6 +679,35 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: 'bold',
   },
+  forgotPasswordRow: {
+    alignItems: 'flex-end',
+    marginTop: 12,
+    paddingVertical: 2,
+  },
+  forgotPasswordText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#15803d',
+  },
+  resetSecondaryLink: {
+    alignSelf: 'flex-end',
+    color: '#15803d',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 10,
+  },
+  resetErrorText: {
+    color: '#dc2626',
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  resetMessageText: {
+    color: '#15803d',
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
   signUpRow: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -392,6 +738,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 20,
+  },
+  forgotModalContent: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 24,
+    elevation: 10,
   },
   modalContent: {
     width: '100%',

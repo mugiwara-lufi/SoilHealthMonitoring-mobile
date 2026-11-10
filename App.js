@@ -12,7 +12,7 @@ import ProfileScreen from './screens/ProfileScreen';
 import AdminRegistrationScreen from './screens/AdminRegistrationScreen';
 import RegistrationScreen from './screens/RegistrationScreen';
 
-const BASE_URL = 'http://10.205.210.28:8000/api';
+const BASE_URL = 'http://10.175.38.28:8000/api';
 const AUTH_URL = `${BASE_URL}/api-token-auth/`;
 
 export default function App() {
@@ -646,10 +646,12 @@ export default function App() {
       {currentScreen === 'Explore' || currentScreen === 'Admin' ? (
         renderDashboardScreen()
       ) : currentScreen === 'History' ? (
-        <HistoryScreen
-          currentTab={getCurrentTabName()}
-          onSelectTab={handleSelectTab}
-        />
+<HistoryScreen
+  currentTab={getCurrentTabName()}
+  onSelectTab={handleSelectTab}
+  plots={plots}
+  token={token}
+/>
       ) : currentScreen === 'Monitor' ? (
         <MonitorScreen
           plotData={selectedPlot}

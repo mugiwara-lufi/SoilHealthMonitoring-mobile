@@ -20,7 +20,7 @@ import { Buffer } from 'buffer';
 import MobileFooter from '../components/MobileFooter';
 
 const screenWidth = Dimensions.get('window').width - 30;
-const API_BASE_URL = 'http://10.205.210.28:8000';
+const API_BASE_URL = 'http://10.175.38.28:8000';
 
 // Supabase Direct Credentials
 const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
@@ -74,15 +74,19 @@ export default function MonitorScreen({
 
   // Functional Daily pH Bar Chart State
   const [dailyPhChartData, setDailyPhChartData] = useState({
-    labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-    values: [6.5, 6.6, 6.4, 6.7, 6.5, 6.8, 6.6],
-    colors: [(opacity = 1) => `rgba(37, 99, 235, ${opacity})`]
+    labels: [],
+    values: [],
+    colors: [],
+    yAxisLabels: ['0', '0', '0', '0', '0']
   });
 
-  // Functional Hourly Line Chart State
+  // The line chart's scale is calculated from the actual pH readings.
   const [hourlyData, setHourlyData] = useState({
-    labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', '24:00'],
-    values: [5.2, 5.4, 5.6, 5.8, 5.9, 5.7, 5.6]
+    labels: [],
+    values: [],
+    yAxisLabels: [],
+    minPh: null,
+    maxPh: null
   });
 
   // Custom Styled Card Alert State
@@ -161,21 +165,23 @@ export default function MonitorScreen({
     return () => clearInterval(interval);
   }, [plotData?.id, activeSensorId, fetchTelemetryHistory]);
 
-  // Process historical records into functional weekly pH averages & 24-hour trend line
+  // Process the existing Supabase records for the daily pH chart and rolling 24-hour trend.
+  // The Supabase query above is intentionally unchanged; the 24-hour filter is client-side only.
   useEffect(() => {
-    if (!historicalRecords || historicalRecords.length === 0) return;
+    const records = Array.isArray(historicalRecords) ? historicalRecords : [];
 
-    // 1. Process Bar Chart (Soil pH Levels by Day)
+    // 1. Soil pH Levels by Day: average available readings for each weekday.
     const daysMap = { 0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat' };
     const dayBuckets = { Mon: [], Tue: [], Wed: [], Thu: [], Fri: [], Sat: [], Sun: [] };
     const orderedDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-    historicalRecords.forEach(rec => {
-      if (!rec.timestamp) return;
-      const d = new Date(rec.timestamp);
-      const dayName = daysMap[d.getDay()];
+    records.forEach((rec) => {
+      if (!rec?.timestamp) return;
+      const date = new Date(rec.timestamp);
+      if (Number.isNaN(date.getTime())) return;
+      const dayName = daysMap[date.getDay()];
       const phVal = parseFloat(rec.ph_level ?? rec.ph);
-      if (!isNaN(phVal) && dayBuckets[dayName]) {
+      if (Number.isFinite(phVal) && dayBuckets[dayName]) {
         dayBuckets[dayName].push(phVal);
       }
     });
@@ -184,68 +190,108 @@ export default function MonitorScreen({
     const barValues = [];
     const colorList = [];
 
-    orderedDays.forEach(day => {
-      const vals = dayBuckets[day];
-      barLabels.push(day);
-      if (vals.length > 0) {
-        const avgPh = vals.reduce((sum, v) => sum + v, 0) / vals.length;
-        const rounded = Number(avgPh.toFixed(1));
-        barValues.push(rounded);
+    // Use the same colors as the pH status description above:
+    // red = highly acidic, amber = moderately acidic/alkaline, blue = optimal.
+    const rgbaForHex = (hex) => {
+      const value = hex.replace('#', '');
+      const r = parseInt(value.slice(0, 2), 16);
+      const g = parseInt(value.slice(2, 4), 16);
+      const b = parseInt(value.slice(4, 6), 16);
+      return (opacity = 1) => `rgba(${r}, ${g}, ${b}, ${opacity})`;
+    };
 
-        // Agricultural threshold color coding
-        if (rounded < 5.5) {
-          colorList.push((opacity = 1) => `rgba(239, 68, 68, ${opacity})`); // Highly Acidic - Red
-        } else if (rounded <= 6.5) {
-          colorList.push((opacity = 1) => `rgba(249, 115, 22, ${opacity})`); // Mod. Acidic - Orange
-        } else if (rounded <= 7.5) {
-          colorList.push((opacity = 1) => `rgba(37, 99, 235, ${opacity})`); // Optimal - Blue
-        } else {
-          colorList.push((opacity = 1) => `rgba(59, 130, 246, ${opacity})`); // Alkaline - Light Blue
-        }
-      } else {
-        barValues.push(6.5);
-        colorList.push((opacity = 1) => `rgba(100, 116, 139, ${opacity})`);
-      }
+    orderedDays.forEach((day) => {
+      const values = dayBuckets[day];
+      // Do not create placeholder bars for days without actual Supabase readings.
+      if (values.length === 0) return;
+
+      const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+      const rounded = Number(average.toFixed(1));
+      barLabels.push(day);
+      barValues.push(rounded);
+
+      let color = '#f59e0b';
+      if (rounded < 5.5) color = '#ef4444';
+      else if (rounded <= 6.5) color = '#f59e0b';
+      else if (rounded <= 7.5) color = '#2563eb';
+      else color = '#f59e0b';
+      colorList.push(rgbaForHex(color));
     });
+
+    const dailyMax = barValues.length > 0 ? Math.max(...barValues) : 0;
+    const dailyAxisTop = dailyMax > 0 ? dailyMax : 1;
+    const dailyAxisLabels = Array.from({ length: 5 }, (_, index) =>
+      (dailyAxisTop - (dailyAxisTop * index / 4)).toFixed(1).replace(/\.0$/, '')
+    );
 
     setDailyPhChartData({
       labels: barLabels,
       values: barValues,
-      colors: colorList
+      colors: colorList,
+      yAxisLabels: dailyAxisLabels
     });
 
-    // 2. Process Line Chart (pH Trend Over Time - Last 24 Hours)
-    const now = new Date();
-    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    
-    const recentRecords = historicalRecords.filter(rec => {
-      if (!rec.timestamp) return true;
-      return new Date(rec.timestamp) >= twentyFourHoursAgo;
-    });
+    // 2. pH Trend Over Time: anchor the 24-hour window to the newest actual
+    // Supabase reading, then include all readings from the 24 hours before it.
+    // This makes the chart useful even when the sensor has not uploaded today.
+    // Missing/invalid timestamps and records without a valid pH are excluded.
+    const timestampedRecords = records
+      .map((rec) => ({
+        rec,
+        timestamp: rec?.timestamp ? new Date(rec.timestamp).getTime() : NaN,
+        ph: parseFloat(rec?.ph_level ?? rec?.ph)
+      }))
+      .filter((item) => Number.isFinite(item.timestamp) && Number.isFinite(item.ph));
 
-    const lineDataset = recentRecords.length > 0 ? recentRecords : historicalRecords.slice(-10);
-    const step = Math.max(1, Math.floor(lineDataset.length / 7));
+    const latestTimestamp = timestampedRecords.length > 0
+      ? Math.max(...timestampedRecords.map((item) => item.timestamp))
+      : null;
+    const twentyFourHoursAgo = latestTimestamp === null
+      ? null
+      : latestTimestamp - (24 * 60 * 60 * 1000);
+
+    const recentRecords = latestTimestamp === null
+      ? []
+      : timestampedRecords
+          .filter((item) => item.timestamp >= twentyFourHoursAgo && item.timestamp <= latestTimestamp)
+          .sort((a, b) => a.timestamp - b.timestamp);
 
     const lineLabels = [];
     const lineValues = [];
 
-    for (let i = 0; i < lineDataset.length; i += step) {
-      const rec = lineDataset[i];
-      const phVal = parseFloat(rec.ph_level ?? rec.ph);
-      if (!isNaN(phVal)) {
-        const d = rec.timestamp ? new Date(rec.timestamp) : new Date();
-        const timeString = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-        lineLabels.push(timeString);
-        lineValues.push(Number(phVal.toFixed(1)));
-      }
+    // Keep all qualifying readings. Do not sample, pad, or fall back to older records.
+    recentRecords.forEach((item) => {
+      const phVal = item.ph;
+      const date = new Date(item.timestamp);
+      lineLabels.push(
+        `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+      );
+      lineValues.push(Number(phVal.toFixed(1)));
+    });
+
+    if (lineValues.length === 0) {
+      setHourlyData({ labels: [], values: [], yAxisLabels: [], minPh: null, maxPh: null });
+      return;
     }
 
-    if (lineValues.length > 0) {
-      setHourlyData({
-        labels: lineLabels,
-        values: lineValues
-      });
-    }
+    const minPh = Math.min(...lineValues);
+    const maxPh = Math.max(...lineValues);
+    // Chart-kit auto-scales from the supplied values. These matching labels
+    // are drawn separately so the Y-axis stays fixed while the plot scrolls.
+    const axisMin = minPh;
+    const axisMax = maxPh;
+    const yAxisLabels = Array.from({ length: 5 }, (_, index) => {
+      const value = axisMax - ((axisMax - axisMin) * index / 4);
+      return value.toFixed(1);
+    });
+
+    setHourlyData({
+      labels: lineLabels,
+      values: lineValues,
+      yAxisLabels,
+      minPh,
+      maxPh
+    });
   }, [historicalRecords]);
 
   const fetchSupabaseLiveRecord = async (targetSensorId) => {
@@ -872,41 +918,60 @@ export default function MonitorScreen({
           </TouchableOpacity>
         </View>
 
-        {/* FUNCTIONAL SOIL PH LEVELS BY DAY BAR CHART */}
+        {/* SOIL PH LEVELS BY DAY BAR CHART */}
         <View style={styles.chartCard}>
           <Text style={styles.chartTitle}>Soil pH Levels by Day</Text>
           <Text style={styles.chartSubtitle}>Weekly monitoring (Live Supabase Telemetry)</Text>
 
           {loadingCharts ? (
             <ActivityIndicator size="small" color="#2d6a4f" style={{ marginVertical: 30 }} />
+          ) : dailyPhChartData.values.length === 0 ? (
+            <Text style={styles.chartEmptyText}>No pH readings available to display.</Text>
           ) : (
             <>
-              <BarChart
-                data={{
-                  labels: dailyPhChartData.labels,
-                  datasets: [{ data: dailyPhChartData.values }],
-                  colors: dailyPhChartData.colors
-                }}
-                width={screenWidth - 20}
-                height={200}
-                yAxisMax={14}
-                fromZero
-                withCustomBarColorFromData
-                flatColor
-                chartConfig={{
-                  backgroundColor: '#ffffff',
-                  backgroundGradientFrom: '#ffffff',
-                  backgroundGradientTo: '#ffffff',
-                  decimalPlaces: 1,
-                  color: (opacity = 1) => `rgba(34, 197, 94, ${opacity})`,
-                  labelColor: (opacity = 1) => `rgba(100, 116, 139, ${opacity})`,
-                  barPercentage: 0.65,
-                  fillShadowGradientOpacity: 1,
-                }}
-                style={styles.chartStyle}
-                withInnerLines={true}
-                showBarTops={false}
-              />
+              <View style={styles.dailyChartRow}>
+                {/* Draw the pH scale separately so its values are always visible.
+                    It stays fixed and is not clipped by react-native-chart-kit. */}
+                <View style={styles.dailyFixedYAxis}>
+                  {dailyPhChartData.yAxisLabels.map((value, index) => (
+                    <Text key={`${value}-${index}`} style={styles.dailyFixedYAxisLabel}>
+                      {value}
+                    </Text>
+                  ))}
+                </View>
+
+                <BarChart
+                  data={{
+                    labels: dailyPhChartData.labels,
+                    datasets: [{
+                      data: dailyPhChartData.values,
+                      colors: dailyPhChartData.colors
+                    }]
+                  }}
+                  width={screenWidth - 58}
+                  height={200}
+                  segments={4}
+                  fromZero
+                  withHorizontalLabels={false}
+                  withVerticalLabels={true}
+                  withCustomBarColorFromData
+                  flatColor
+                  chartConfig={{
+                    backgroundColor: '#ffffff',
+                    backgroundGradientFrom: '#ffffff',
+                    backgroundGradientTo: '#ffffff',
+                    decimalPlaces: 1,
+                    color: (opacity = 1) => `rgba(34, 197, 94, ${opacity})`,
+                    labelColor: (opacity = 1) => `rgba(100, 116, 139, ${opacity})`,
+                    barPercentage: 0.65,
+                    fillShadowGradientOpacity: 1,
+                    propsForLabels: { fontSize: 10 },
+                  }}
+                  style={styles.dailyBarChartStyle}
+                  withInnerLines={true}
+                  showBarTops={false}
+                />
+              </View>
 
               <View style={styles.legendGrid}>
                 <View style={styles.legendItem}>
@@ -914,7 +979,7 @@ export default function MonitorScreen({
                   <Text style={styles.legendText}>Highly Acidic (&lt;5.5)</Text>
                 </View>
                 <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: '#f97316' }]} />
+                  <View style={[styles.legendDot, { backgroundColor: '#f59e0b' }]} />
                   <Text style={styles.legendText}>Mod. Acidic (5.5-6.5)</Text>
                 </View>
                 <View style={styles.legendItem}>
@@ -922,7 +987,7 @@ export default function MonitorScreen({
                   <Text style={styles.legendText}>OPTIMAL (6.5-7.5)</Text>
                 </View>
                 <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: '#3b82f6' }]} />
+                  <View style={[styles.legendDot, { backgroundColor: '#f59e0b' }]} />
                   <Text style={styles.legendText}>Alkaline (&gt;7.5)</Text>
                 </View>
               </View>
@@ -930,39 +995,58 @@ export default function MonitorScreen({
           )}
         </View>
 
-        {/* FUNCTIONAL PH TREND OVER TIME LINE CHART */}
+        {/* PH TREND OVER TIME: FIXED Y-AXIS + HORIZONTAL SCROLL */}
         <View style={styles.chartCard}>
           <Text style={styles.chartTitle}>pH Trend Over Time</Text>
-          <Text style={styles.chartSubtitle}>Last 24 hours (Live Supabase Telemetry)</Text>
+          <Text style={styles.chartSubtitle}>24 hours ending at the most recent recorded reading</Text>
 
           {loadingCharts ? (
             <ActivityIndicator size="small" color="#2d6a4f" style={{ marginVertical: 30 }} />
+          ) : hourlyData.values.length === 0 ? (
+            <Text style={styles.chartEmptyText}>No pH readings from the last 24 hours.</Text>
           ) : (
-            <LineChart
-              data={{
-                labels: hourlyData.labels,
-                datasets: [{ data: hourlyData.values }]
-              }}
-              width={screenWidth - 20}
-              height={190}
-              yAxisMin={4}
-              yAxisMax={14}
-              chartConfig={{
-                backgroundColor: '#ffffff',
-                backgroundGradientFrom: '#ffffff',
-                backgroundGradientTo: '#ffffff',
-                decimalPlaces: 1,
-                color: (opacity = 1) => `rgba(34, 197, 94, ${opacity})`,
-                labelColor: (opacity = 1) => `rgba(100, 116, 139, ${opacity})`,
-                propsForDots: {
-                  r: '5',
-                  strokeWidth: '2',
-                  stroke: '#22c55e'
-                }
-              }}
-              bezier
-              style={styles.chartStyle}
-            />
+            <View style={styles.trendChartRow}>
+              {/* This Y-axis remains outside the horizontal ScrollView, so it stays fixed. */}
+              <View style={styles.fixedYAxis}>
+                {hourlyData.yAxisLabels.map((value, index) => (
+                  <Text key={`${value}-${index}`} style={styles.fixedYAxisLabel}>{value}</Text>
+                ))}
+              </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator
+                nestedScrollEnabled
+                style={styles.trendHorizontalScroll}
+                contentContainerStyle={styles.trendChartContent}
+              >
+                <LineChart
+                  data={{
+                    labels: hourlyData.labels,
+                    datasets: [{ data: hourlyData.values }]
+                  }}
+                  width={Math.max(screenWidth - 65, hourlyData.values.length * 58)}
+                  height={190}
+                  segments={4}
+                  withHorizontalLabels={false}
+                  chartConfig={{
+                    backgroundColor: '#ffffff',
+                    backgroundGradientFrom: '#ffffff',
+                    backgroundGradientTo: '#ffffff',
+                    decimalPlaces: 1,
+                    color: (opacity = 1) => `rgba(34, 197, 94, ${opacity})`,
+                    labelColor: (opacity = 1) => `rgba(100, 116, 139, ${opacity})`,
+                    propsForDots: {
+                      r: '5',
+                      strokeWidth: '2',
+                      stroke: '#22c55e'
+                    }
+                  }}
+                  bezier
+                  style={styles.chartStyle}
+                />
+              </ScrollView>
+            </View>
           )}
         </View>
 
@@ -1447,7 +1531,62 @@ const styles = StyleSheet.create({
   },
   chartTitle: { fontSize: 16, fontWeight: 'bold', color: '#0f172a' },
   chartSubtitle: { fontSize: 12, color: '#94a3b8', marginBottom: 10 },
-  chartStyle: { marginVertical: 8, borderRadius: 12, paddingRight: 35 },
+  chartStyle: { marginVertical: 8, borderRadius: 12, paddingRight: 12 },
+  chartEmptyText: {
+    color: '#94a3b8',
+    fontSize: 12,
+    textAlign: 'center',
+    paddingVertical: 28,
+  },
+  dailyChartRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    width: '100%',
+  },
+  dailyFixedYAxis: {
+    width: 34,
+    height: 150,
+    marginTop: 18,
+    marginBottom: 30,
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    paddingRight: 5,
+  },
+  dailyFixedYAxisLabel: {
+    color: '#64748b',
+    fontSize: 10,
+    textAlign: 'right',
+  },
+  dailyBarChartStyle: {
+    marginVertical: 8,
+    borderRadius: 12,
+    paddingRight: 4,
+  },
+  trendChartRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    width: '100%',
+  },
+  fixedYAxis: {
+    width: 38,
+    height: 150,
+    marginTop: 18,
+    marginBottom: 30,
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    paddingRight: 5,
+  },
+  fixedYAxisLabel: {
+    color: '#64748b',
+    fontSize: 10,
+    textAlign: 'right',
+  },
+  trendHorizontalScroll: {
+    flex: 1,
+  },
+  trendChartContent: {
+    paddingRight: 4,
+  },
  
   legendGrid: {
     flexDirection: 'row',
@@ -1668,4 +1807,4 @@ const styles = StyleSheet.create({
   cardAlertCancelText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
   cardAlertConfirmBtn: { flex: 1, backgroundColor: '#10b981', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
   cardAlertConfirmText: { fontSize: 13, fontWeight: 'bold', color: '#ffffff' }
-});
+})
