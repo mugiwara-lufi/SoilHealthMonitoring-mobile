@@ -12,12 +12,13 @@ import {
   StatusBar,
   KeyboardAvoidingView,
   Platform,
-  ScrollView
+  ScrollView,
+  Image
 } from 'react-native';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 
 // Must match BASE_URL in App.js (the /api prefix is included here).
-const API_BASE_URL = 'http://10.175.38.28:8000/api';
+const API_BASE_URL = 'http://52.63.40.11/api';
 
 export default function LoginScreen({ onLogin, onNavigateRegister, loginError }) {
   const [email, setEmail] = useState('');
@@ -197,11 +198,19 @@ export default function LoginScreen({ onLogin, onNavigateRegister, loginError })
             <View style={styles.ambientCircle1} />
             <View style={styles.ambientCircle2} />
 
-            <View style={styles.iconCircle}>
-              <MaterialCommunityIcons name="sprout" size={42} color="#15803d" />
+            <View style={styles.logoCircle}>
+              <Image
+                source={require('../assets/jjmap_logo.png')}
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
             </View>
 
-            <Text style={styles.brandTitle}>JJMAP</Text>
+            <Image
+              source={require('../assets/jjmap_text.png')}
+              style={styles.brandTextImage}
+              resizeMode="contain"
+            />
             <Text style={styles.brandSubtitle}>Soil Health Monitor</Text>
             <Text style={styles.brandDescription}>
               Joint Soil Monitoring Application Platform
@@ -567,31 +576,28 @@ const styles = StyleSheet.create({
     borderRadius: 60,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
   },
-  iconCircle: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: '#ffffff',
+  logoCircle: {
+    width: 160,
+    height: 160,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 12,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
+    marginBottom: -30,
+    overflow: 'hidden',
   },
-  brandTitle: {
-    fontSize: 30,
-    fontWeight: '900',
-    color: '#ffffff',
-    letterSpacing: 2,
+  logoImage: {
+    width: '78%',
+    height: '78%',
+  },
+  brandTextImage: {
+    width: 250,
+    height: 100,
+    marginBottom: -10,
   },
   brandSubtitle: {
     fontSize: 16,
     fontWeight: '700',
     color: '#dcfce7',
-    marginTop: 4,
+    marginTop: 2,
   },
   brandDescription: {
     fontSize: 11,

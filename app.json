@@ -1,27 +1,33 @@
 {
   "expo": {
-    "name": "SoilHealthMonitorMobile",
+    "name": "JJMAP",
     "slug": "SoilHealthMonitorMobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+"splash": {
+  "image": "./assets/splash-icon.png",
+  "resizeMode": "contain",
+  "backgroundColor": "#15803d"
     },
     "ios": {
       "supportsTablet": true
     },
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+  "adaptiveIcon": {
+    "foregroundImage": "./assets/icon.png",
+    "backgroundColor": "#15803d"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.anonymous.SoilHealthMonitorMobile"
+      "usesCleartextTraffic": true,
+      "package": "com.anonymous.JJMAP",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -39,6 +45,11 @@
         }
       ],
       "expo-font"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "0fdba981-360c-4666-8fd5-8989fcbf1b1d"
+      }
+    }
   }
 }

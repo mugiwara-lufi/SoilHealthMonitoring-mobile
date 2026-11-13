@@ -12,11 +12,12 @@ import {
   SafeAreaView,
   ScrollView,
   Modal,
-  ActivityIndicator
+  ActivityIndicator,
+  Image
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-const API_BASE_URL = 'http://10.175.38.28:8000/api';
+const API_BASE_URL = 'http://52.63.40.11/api';
 
 export default function RegistrationScreen({ onRegister, onBackToLogin, defaultRole = 'user' }) {
   const isAdminRole = defaultRole === 'admin';
@@ -204,9 +205,16 @@ export default function RegistrationScreen({ onRegister, onBackToLogin, defaultR
           <TouchableOpacity style={styles.backBtn} onPress={onBackToLogin}>
             <Ionicons name="arrow-back" size={24} color="#fff" />
           </TouchableOpacity>
+
+          {/* APP LOGO / IMAGE CONTAINER */}
           <View style={styles.headerIconCircle}>
-            <Ionicons name={isAdminRole ? "shield-checkmark-outline" : "leaf-outline"} size={32} color="#15803d" />
+            <Image 
+              source={require('../assets/jjmap_logo.png')}
+              style={styles.logoImage}
+              resizeMode="contain"
+            />
           </View>
+
           <Text style={styles.headerTitle}>
             {isAdminRole ? 'Create Farm Owner Account' : 'Create Farmer Account'}
           </Text>
@@ -489,7 +497,17 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   backBtn: { position: 'absolute', top: 20, left: 20, padding: 10 },
-  headerIconCircle: { backgroundColor: '#cff4cd', padding: 15, borderRadius: 50, marginBottom: 12 },
+  headerIconCircle: {
+    width: 70,
+    height: 70,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12
+  },
+  logoImage: {
+    width: '100%',
+    height: '100%',
+  },
   headerTitle: { color: '#fff', fontSize: 24, fontWeight: 'bold', marginBottom: 4 },
   headerSub: { color: '#cff4cd', fontSize: 14 },
   formContainer: { paddingHorizontal: 25, paddingTop: 30, paddingBottom: 50 },
@@ -528,7 +546,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     elevation: 5
   },
-  otpHeaderIcon: {
+    otpHeaderIcon: {
     width: 64,
     height: 64,
     borderRadius: 32,

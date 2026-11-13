@@ -13,7 +13,8 @@ import {
   Modal,
   ActivityIndicator,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  Image
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -507,7 +508,11 @@ export default function AdminScreen({
           <View style={styles.topRow}>
             <View style={styles.brandGroup}>
               <View style={styles.shieldBadge}>
-                <Ionicons name="shield-checkmark" size={24} color="#10b981" />
+                <Image
+                  source={require('../assets/jjmap_logo.png')}
+                  style={{ width: 42, height: 42 }}
+                  resizeMode="contain"
+                />
               </View>
               <View>
                 <Text style={styles.headerTitle}>Admin Panel</Text>
@@ -1176,8 +1181,8 @@ const styles = StyleSheet.create({
   scrollContent: { paddingBottom: 40 },
   headerContainer: { backgroundColor: '#122c22', paddingHorizontal: 20, paddingTop: 30, paddingBottom: 10 },
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  brandGroup: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  shieldBadge: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#1f4233', justifyContent: 'center', alignItems: 'center' },
+  brandGroup: { flexDirection: 'row', alignItems: 'center', gap: 1 },
+  shieldBadge: { width: 52, height: 52, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }, // Increased container size
   headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#ffffff' },
   headerSubtitle: { fontSize: 12, color: '#a7f3d0' },
   actionRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },

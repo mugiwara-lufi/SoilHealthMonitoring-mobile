@@ -12,7 +12,7 @@ import ProfileScreen from './screens/ProfileScreen';
 import AdminRegistrationScreen from './screens/AdminRegistrationScreen';
 import RegistrationScreen from './screens/RegistrationScreen';
 
-const BASE_URL = 'http://10.175.38.28:8000/api';
+const BASE_URL = 'http://52.63.40.11/api';
 const AUTH_URL = `${BASE_URL}/api-token-auth/`;
 
 export default function App() {
@@ -232,6 +232,29 @@ export default function App() {
   // -------------------- LOGIN --------------------
   const handleLogin = async (username, password) => {
     setLoginError(false); // Reset previous login error state
+
+    // Temporary AWS connection test
+    console.log('TESTING AWS CONNECTION:', BASE_URL);
+
+    try {
+      const testResponse = await fetch(`${BASE_URL}/`, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      console.log('AWS CONNECTION SUCCESS:', testResponse.status);
+    } catch (error) {
+      console.error('AWS CONNECTION FAILED:', {
+        message: error.message,
+        name: error.name,
+        url: BASE_URL,
+      });
+
+      return;
+    }
+
     try {
       const response = await fetch(AUTH_URL, {
         method: 'POST',
@@ -245,7 +268,6 @@ export default function App() {
       const data = await response.json();
 
       if (!response.ok || !data.token) {
-        // Removed native Alert.alert popup; setting inline error flag instead
         setLoginError(true);
         return;
       }
@@ -286,8 +308,12 @@ export default function App() {
         fetchUsers(data.token);
       }
     } catch (error) {
-      console.error('Login Error:', error);
-      setLoginError(true); // Treat network / server reachability errors as invalid credentials/inline error
+      console.error('Login Network Error:', error);
+
+      Alert.alert(
+        'Connection Error',
+        'The mobile app cannot reach the AWS backend. Please check your internet connection and API configuration.'
+      );
     }
   };
 
@@ -646,12 +672,12 @@ export default function App() {
       {currentScreen === 'Explore' || currentScreen === 'Admin' ? (
         renderDashboardScreen()
       ) : currentScreen === 'History' ? (
-<HistoryScreen
-  currentTab={getCurrentTabName()}
-  onSelectTab={handleSelectTab}
-  plots={plots}
-  token={token}
-/>
+        <HistoryScreen
+          currentTab={getCurrentTabName()}
+          onSelectTab={handleSelectTab}
+          plots={plots}
+          token={token}
+        />
       ) : currentScreen === 'Monitor' ? (
         <MonitorScreen
           plotData={selectedPlot}

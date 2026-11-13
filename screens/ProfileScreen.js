@@ -19,13 +19,12 @@ import {
 import {
   Feather,
   Ionicons,
-  FontAwesome5,
 } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import MobileFooter from '../components/MobileFooter';
 
-const BASE_URL = 'http://10.175.38.28:8000/api';
-const SERVER_ROOT = 'http://10.175.38.28:8000';
+const BASE_URL = 'http://52.63.40.11/api';
+const SERVER_ROOT = 'http://52.63.40.11';
 
 export default function ProfileScreen({
   user,
@@ -85,7 +84,7 @@ export default function ProfileScreen({
     setCardAlert(prev => ({ ...prev, visible: false }));
   };
 
-  // Calculate assigned plots for this user (matching AdminScreen assignment logic)
+  // Calculate assigned plots for this user
   const userPlots = (plots || []).filter((p) => {
     const isAssigned =
       (user?.id && String(p.farmer) === String(user.id)) ||
@@ -94,7 +93,6 @@ export default function ProfileScreen({
   });
   const assignedPlotsCount = userPlots.length;
 
-  // Open Edit Profile Modal with exact first_name & last_name from database
   const handleOpenEditProfile = () => {
     setFirstName(user?.first_name || '');
     setLastName(user?.last_name || '');
@@ -103,7 +101,6 @@ export default function ProfileScreen({
     setIsEditProfileOpen(true);
   };
 
-  // ---------- PICK IMAGE FROM PHONE GALLERY ----------
   const handlePickImage = async () => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permissionResult.granted) {
@@ -127,7 +124,6 @@ export default function ProfileScreen({
     }
   };
 
-  // ---------- SAVE PROFILE CHANGES TO DATABASE ----------
   const handleSaveProfile = async () => {
     if (!firstName.trim()) {
       showAlert({
@@ -205,7 +201,6 @@ export default function ProfileScreen({
     }
   };
 
-  // ---------- CHANGE PASSWORD IN DATABASE ----------
   const handleChangePassword = async () => {
     if (!oldPassword.trim()) {
       showAlert({
@@ -433,13 +428,21 @@ export default function ProfileScreen({
             </TouchableOpacity>
           </View>
 
-          {/* ABOUT SECTION */}
+          {/* ABOUT SECTION (Full-Scale Logo & Text Banner, White Background Wrapper Removed) */}
           <Text style={styles.sectionHeader}>ABOUT</Text>
           <View style={styles.aboutCard}>
-            <View style={styles.aboutIconCircle}>
-              <FontAwesome5 name="seedling" size={30} color="#ffffff" />
+            <View style={styles.aboutLogoContainer}>
+              <Image
+                source={require('../assets/jjmap_logo.png')}
+                style={styles.aboutLogoImage}
+                resizeMode="contain"
+              />
             </View>
-            <Text style={styles.aboutTitle}>JJMAP v1.0</Text>
+            <Image
+              source={require('../assets/jjmap_text.png')}
+              style={styles.aboutTextImage}
+              resizeMode="contain"
+            />
             <Text style={styles.aboutSubtitle}>
               Joint Soil Monitoring Application Platform
             </Text>
@@ -951,6 +954,8 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#f1f5f9',
   },
+  
+  // About Card Updated (Full Scale Logo & Text Banner, Background Wrapper Removed)
   aboutCard: {
     backgroundColor: '#ffffff',
     borderRadius: 20,
@@ -962,19 +967,21 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
-  aboutIconCircle: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#22c55e',
+  aboutLogoContainer: {
+    width: 90,
+    height: 90,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 2,
   },
-  aboutTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#0f172a',
+  aboutLogoImage: {
+    width: '100%',
+    height: '100%',
+  },
+  aboutTextImage: {
+    width: 170,
+    height: 45,
+    marginVertical: 4,
   },
   aboutSubtitle: {
     fontSize: 12,
