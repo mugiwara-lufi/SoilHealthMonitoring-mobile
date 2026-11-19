@@ -19,7 +19,7 @@ import MobileFooter from '../components/MobileFooter';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const AXIS_WIDTH = 42;
-const CHART_VIEWPORT_WIDTH = SCREEN_WIDTH - 32 - 32 - AXIS_WIDTH;
+const CHART_VIEWPORT_WIDTH = SCREEN_WIDTH - 32 - 32;
 
 const SUPABASE_URL = 'https://fpisfwcphgjcvxomzpko.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_cyQgbi_v02dkhswabEBWoQ_3exGPlaK';
@@ -46,6 +46,9 @@ export default function HistoryScreen({
     labels: [],
     datasets: [],
   });
+
+  const [chartPointRecords, setChartPointRecords] = useState([]);
+const [selectedChartPoint, setSelectedChartPoint] = useState(null);
 
   const [stats, setStats] = useState({
     avg: '--',
@@ -295,177 +298,290 @@ export default function HistoryScreen({
       return null;
     };
 
-    const validRecords = inRangeRecords
-      .map((record) => ({
-        record,
-        values: getMetricValues(record),
-      }))
-      .filter(({ values }) => {
-        if (!values) return false;
 
-        if (selectedMetric === 'NPK') {
-          return values.some((value) => value !== null);
-        }
-
-        return values[0] !== null;
-      });
-
-    if (validRecords.length === 0) {
-      setChartData({
-        labels: [],
-        datasets: [],
-      });
-
-      setStats({
-        avg: 'N/A',
-        min: 'N/A',
-        max: 'N/A',
-      });
-
-      setRecentEvents([]);
-      return;
-    }
-
-    // Keep all valid data points. Only reduce the number of visible date labels.
-    const pointCount = validRecords.length;
-    const labelCount = Math.min(6, pointCount);
-
-    const labelIndexes = new Set(
-      Array.from({ length: labelCount }, (_, index) =>
-        labelCount === 1
-          ? 0
-          : Math.round(
-              (index * (pointCount - 1)) / (labelCount - 1)
-            )
-      )
-    );
-
-    const labels = validRecords.map(({ record }, index) => {
-      if (!labelIndexes.has(index)) return '';
-
-      const date = new Date(record.timestamp);
-
-      return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-      });
-    });
-
-    let datasets = [];
-    let statsValues = [];
+const validRecords = inRangeRecords
+  .map((record) => ({
+    record,
+    values: getMetricValues(record),
+  }))
+  .filter(({ values }) => {
+    if (!values) return false;
 
     if (selectedMetric === 'NPK') {
-      const nutrientSeries = [
-        { color: '#4ade80', index: 0 },
-        { color: '#166534', index: 1 },
-        { color: '#064e3b', index: 2 },
-      ];
+      return values.some((value) => value !== null);
+    }
 
-      datasets = nutrientSeries.map((nutrient) => ({
-        data: validRecords.map(({ values }) => {
-          const value = values[nutrient.index];
+    return values[0] !== null;
+  });
 
-          // Chart Kit requires numeric data points.
-          // Missing nutrient readings are represented as zero in this chart.
-          return value === null ? 0 : value;
-        }),
-        color: (opacity = 1) => {
-          const hex = nutrient.color.replace('#', '');
-          const red = parseInt(hex.slice(0, 2), 16);
-          const green = parseInt(hex.slice(2, 4), 16);
-          const blue = parseInt(hex.slice(4, 6), 16);
+if (validRecords.length === 0) {
+  setChartPointRecords([]);
+  setSelectedChartPoint(null);
 
-          return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
-        },
-      }));
+  setChartData({ labels: [], datasets: [] });
 
-      statsValues = validRecords.flatMap(({ values }) =>
-        values.filter((value) => value !== null)
-      );
-    } else {
-      const values = validRecords.map(({ values }) =>
+  setStats({
+    avg: 'N/A',
+    min: 'N/A',
+    max: 'N/A',
+  });
+
+  setRecentEvents([]);
+  return;
+}
+
+setChartPointRecords(
+  validRecords.map(({ record }) => ({
+    timestamp: record.timestamp,
+  }))
+);
+
+// Clear the previously selected point when chart data changes.
+setSelectedChartPoint(null);
+
+// --------------------------------------------------
+// 1. Calculate statistics using ALL valid readings
+// --------------------------------------------------
+let statsValues = [];
+
+if (selectedMetric === 'NPK') {
+  statsValues = validRecords.flatMap(({ values }) =>
+    values.filter((value) => value !== null)
+  );
+} else {
+  statsValues = validRecords.map(({ values }) => values[0]);
+}
+
+if (statsValues.length > 0) {
+  const precision = selectedMetric === 'pH' ? 2 : 1;
+
+  const average =
+    statsValues.reduce((sum, value) => sum + value, 0) /
+    statsValues.length;
+
+  setStats({
+    avg: `${average.toFixed(precision)}${activeTheme.unit}`,
+    min: `${Math.min(...statsValues).toFixed(precision)}${activeTheme.unit}`,
+    max: `${Math.max(...statsValues).toFixed(precision)}${activeTheme.unit}`,
+  });
+} else {
+  setStats({ avg: 'N/A', min: 'N/A', max: 'N/A' });
+}
+
+// --------------------------------------------------
+// 2. Configure chart filtering
+// --------------------------------------------------
+const changeThresholds = {
+  pH: 0.1,
+  Moisture: 1.0,
+  Temp: 0.5,
+  NPK: 2.0,
+};
+
+const intervalByRange = {
+  '7 Days': 5 * 60 * 1000,
+  '30 Days': 30 * 60 * 1000,
+  '90 Days': 2 * 60 * 60 * 1000,
+};
+
+const CHANGE_THRESHOLD = changeThresholds[selectedMetric] ?? 0.1;
+const MIN_INTERVAL = intervalByRange[selectedRange] ?? 5 * 60 * 1000;
+
+// --------------------------------------------------
+// 3. Keep only meaningful chart readings
+// --------------------------------------------------
+const filteredRecords = [];
+
+let lastDisplayedValues = null;
+let lastDisplayedTime = null;
+
+validRecords.forEach(({ record, values }, index) => {
+  const timestamp = new Date(record.timestamp).getTime();
+
+  if (!Number.isFinite(timestamp)) return;
+
+  const currentValues = values.map((value) =>
+    value === null ? null : Number(value)
+  );
+
+  // Always keep the first reading.
+  if (filteredRecords.length === 0) {
+    filteredRecords.push({ record, values: currentValues });
+
+    lastDisplayedValues = currentValues;
+    lastDisplayedTime = timestamp;
+    return;
+  }
+
+  const enoughTimePassed =
+    timestamp - lastDisplayedTime >= MIN_INTERVAL;
+
+  let meaningfulChange = false;
+
+  if (selectedMetric === 'NPK') {
+    meaningfulChange = currentValues.some((value, nutrientIndex) => {
+      const previousValue = lastDisplayedValues[nutrientIndex];
+
+      if (value === null || previousValue === null) return false;
+
+      return Math.abs(value - previousValue) >= CHANGE_THRESHOLD;
+    });
+  } else {
+    const currentValue = currentValues[0];
+    const previousValue = lastDisplayedValues[0];
+
+    meaningfulChange =
+      currentValue !== null &&
+      previousValue !== null &&
+      Math.abs(currentValue - previousValue) >= CHANGE_THRESHOLD;
+  }
+
+  if (meaningfulChange && enoughTimePassed) {
+    filteredRecords.push({ record, values: currentValues });
+
+    lastDisplayedValues = currentValues;
+    lastDisplayedTime = timestamp;
+  }
+});
+
+// Always preserve the latest valid reading.
+const latest = validRecords[validRecords.length - 1];
+
+const latestTimestamp = new Date(latest.record.timestamp).getTime();
+
+const lastFiltered = filteredRecords[filteredRecords.length - 1];
+
+if (
+  !lastFiltered ||
+  lastFiltered.record !== latest.record
+) {
+  filteredRecords.push({
+    record: latest.record,
+    values: latest.values,
+  });
+}
+
+// --------------------------------------------------
+// 4. Generate chart labels
+// --------------------------------------------------
+const pointCount = filteredRecords.length;
+const labelCount = Math.min(6, pointCount);
+
+const labelIndexes = new Set(
+  Array.from({ length: labelCount }, (_, index) =>
+    labelCount === 1
+      ? 0
+      : Math.round(
+          (index * (pointCount - 1)) / (labelCount - 1)
+        )
+  )
+);
+
+const labels = filteredRecords.map(({ record }, index) => {
+  if (!labelIndexes.has(index)) return '';
+
+  const date = new Date(record.timestamp);
+
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+});
+
+// --------------------------------------------------
+// 5. Build chart datasets
+// --------------------------------------------------
+let datasets = [];
+
+if (selectedMetric === 'NPK') {
+  const nutrientSeries = [
+    { color: '#4ade80', index: 0 },
+    { color: '#166534', index: 1 },
+    { color: '#064e3b', index: 2 },
+  ];
+
+  datasets = nutrientSeries.map((nutrient) => ({
+    data: filteredRecords.map(({ values }) => {
+      const value = values[nutrient.index];
+
+      // Chart Kit requires numbers. Null is plotted as zero,
+      // so use this only if zero is acceptable for your data.
+      return value === null ? 0 : value;
+    }),
+    color: (opacity = 1) => {
+      const hex = nutrient.color.replace('#', '');
+      const red = parseInt(hex.slice(0, 2), 16);
+      const green = parseInt(hex.slice(2, 4), 16);
+      const blue = parseInt(hex.slice(4, 6), 16);
+
+      return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
+    },
+  }));
+} else {
+  datasets = [
+    {
+      data: filteredRecords.map(({ values }) =>
         Number(values[0].toFixed(2))
-      );
+      ),
+    },
+  ];
+}
 
-      datasets = [{ data: values }];
-      statsValues = values;
-    }
+setChartData({
+  labels,
+  datasets,
+});
 
-    if (statsValues.length > 0) {
-      const precision = selectedMetric === 'pH' ? 2 : 1;
+// --------------------------------------------------
+// 6. Generate recent events from original records
+// --------------------------------------------------
+const generatedEvents = [];
 
-      const average =
-        statsValues.reduce((sum, value) => sum + value, 0) /
-        statsValues.length;
+[...inRangeRecords]
+  .reverse()
+  .slice(0, 10)
+  .forEach((record, index) => {
+    const date = new Date(record.timestamp);
 
-      setStats({
-        avg: `${average.toFixed(precision)}${activeTheme.unit}`,
-        min: `${Math.min(...statsValues).toFixed(precision)}${activeTheme.unit}`,
-        max: `${Math.max(...statsValues).toFixed(precision)}${activeTheme.unit}`,
-      });
-    } else {
-      setStats({
-        avg: 'N/A',
-        min: 'N/A',
-        max: 'N/A',
-      });
-    }
-
-    setChartData({
-      labels,
-      datasets,
+    const dateStr = date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
     });
 
-    // Recent events are also based only on the selected plot.
-    const generatedEvents = [];
+    const phValue = toNumber(record.ph_level ?? record.ph);
 
-    [...inRangeRecords]
-      .reverse()
-      .slice(0, 10)
-      .forEach((record, index) => {
-        const date = new Date(record.timestamp);
-
-        const dateStr = date.toLocaleDateString('en-US', {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
+    if (phValue !== null) {
+      if (phValue < 5.5) {
+        generatedEvents.push({
+          id: `evt-${index}-acidic`,
+          title: `Low pH (${phValue.toFixed(1)}) - Acidic Soil Detected`,
+          date: dateStr,
+          dotColor: '#ef4444',
         });
+      } else if (phValue >= 6.0 && phValue <= 7.0) {
+        generatedEvents.push({
+          id: `evt-${index}-optimal`,
+          title: `pH level (${phValue.toFixed(1)}) reached optimal range`,
+          date: dateStr,
+          dotColor: '#22c55e',
+        });
+      }
+    }
 
-        const phValue = toNumber(
-          record.ph_level ?? record.ph
-        );
-
-        if (phValue !== null) {
-          if (phValue < 5.5) {
-            generatedEvents.push({
-              id: `evt-${index}-acidic`,
-              title: `Low pH (${phValue.toFixed(1)}) - Acidic Soil Detected`,
-              date: dateStr,
-              dotColor: '#ef4444',
-            });
-          } else if (phValue >= 6.0 && phValue <= 7.0) {
-            generatedEvents.push({
-              id: `evt-${index}-optimal`,
-              title: `pH level (${phValue.toFixed(1)}) reached optimal range`,
-              date: dateStr,
-              dotColor: '#22c55e',
-            });
-          }
-        }
-
-        if (record.sensor_id || selectedPlotObject?.sensor_id) {
-          generatedEvents.push({
-            id: `evt-${index}-sensor`,
-            title: `Telemetry update from Node ${
-              record.sensor_id || selectedPlotObject.sensor_id
-            }`,
-            date: dateStr,
-            dotColor: '#3b82f6',
-          });
-        }
+    if (record.sensor_id || selectedPlotObject?.sensor_id) {
+      generatedEvents.push({
+        id: `evt-${index}-sensor`,
+        title: `Telemetry update from Node ${
+          record.sensor_id || selectedPlotObject.sensor_id
+        }`,
+        date: dateStr,
+        dotColor: '#3b82f6',
       });
+    }
+  }); 
 
-    setRecentEvents(generatedEvents.slice(0, 4));
+setRecentEvents(generatedEvents.slice(0, 4));
   }, [
     rawRecords,
     selectedRange,
@@ -850,11 +966,22 @@ export default function HistoryScreen({
 
                       return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
                     },
+                    
                   }}
+                    onDataPointClick={({ index, value }) => {
+                      const selectedRecord = chartPointRecords[index];
+
+                      if (!selectedRecord) return;
+
+                      setSelectedChartPoint({
+                        timestamp: selectedRecord.timestamp,
+                        value,
+                      });
+                    }}
                   bezier={false}
                   withDots
                   withLegend={false}
-                  withVerticalLabels
+                  withVerticalLabels={false}
                   withHorizontalLabels
                   fromZero={false}
                   segments={4}
@@ -866,6 +993,42 @@ export default function HistoryScreen({
                   style={styles.chartStyle}
                 />
               </ScrollView>
+              {selectedChartPoint && (
+  <View style={styles.selectedPointCard}>
+    <View style={{ flex: 1 }}>
+      <Text style={styles.selectedPointLabel}>
+        Selected Reading
+      </Text>
+
+      <Text style={styles.selectedPointValue}>
+        {Number(selectedChartPoint.value).toFixed(
+          selectedMetric === 'pH' ? 2 : 1
+        )} {activeTheme.unit}
+      </Text>
+
+      <Text style={styles.selectedPointTime}>
+        {new Date(selectedChartPoint.timestamp).toLocaleString(
+          'en-US',
+          {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+          }
+        )}
+      </Text>
+    </View>
+
+    <TouchableOpacity
+      onPress={() => setSelectedChartPoint(null)}
+      activeOpacity={0.7}
+    >
+      <Feather name="x-circle" size={20} color="#64748b" />
+    </TouchableOpacity>
+  </View>
+)}
             </View>
 
           )}
@@ -1018,6 +1181,37 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
 
+  selectedPointCard: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  backgroundColor: '#f0fdf4',
+  borderWidth: 1,
+  borderColor: '#bbf7d0',
+  borderRadius: 12,
+  padding: 12,
+  marginTop: 12,
+},
+
+selectedPointLabel: {
+  fontSize: 11,
+  color: '#64748b',
+  fontWeight: '500',
+},
+
+selectedPointValue: {
+  fontSize: 22,
+  fontWeight: 'bold',
+  color: '#15803d',
+  marginTop: 3,
+},
+
+selectedPointTime: {
+  fontSize: 12,
+  color: '#475569',
+  marginTop: 4,
+},
+
   filterCard: {
     backgroundColor: '#ffffff',
     marginHorizontal: 16,
@@ -1159,34 +1353,32 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  downloadBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: '#f0fdf4',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
-  },
 
+chartWrapper: {
+  width: '100%',
+  paddingHorizontal: 0,
+  paddingBottom: 0,
+  marginTop: 2,
+},
 
-  chartWrapper: {
-    width: '100%',
-    marginTop: 8,
-  },
+horizontalChartScroll: {
+  width: '100%',
+  margin: 0,
+  padding: 0,
+},
 
-  horizontalChartScroll: {
-    width: '100%',
-  },
+horizontalChartContent: {
+  padding: 0,
+  margin: 0,
+},
 
-  horizontalChartContent: {
-    paddingRight: 4,
-  },
-
-  chartStyle: {
-    marginVertical: 4,
-    borderRadius: 16,
-  },
+chartStyle: {
+  marginVertical: 0,
+  marginHorizontal: 0,
+  paddingLeft: 0,
+  paddingRight: AXIS_WIDTH,
+  borderRadius: 16,
+},
 
   fixedYAxis: {
     width: AXIS_WIDTH,
@@ -1202,19 +1394,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#64748b',
     textAlign: 'right',
-  },
-
-  horizontalChartScroll: {
-    flex: 1,
-  },
-
-  horizontalChartContent: {
-    paddingRight: 8,
-  },
-
-  chartStyle: {
-    marginVertical: 8,
-    borderRadius: 16,
   },
 
   emptyChart: {

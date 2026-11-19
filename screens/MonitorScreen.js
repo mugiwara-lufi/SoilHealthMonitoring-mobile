@@ -11,7 +11,9 @@ import {
   Dimensions,
   ActivityIndicator,
   Modal,
-  TextInput
+  TextInput,
+  PermissionsAndroid,
+  Platform,
 } from 'react-native';
 import { BarChart, LineChart } from 'react-native-chart-kit';
 import { Ionicons } from '@expo/vector-icons';
@@ -50,10 +52,51 @@ export default function MonitorScreen({
   const currentCrop = plotData?.crop || plotData?.crop_type || "Crop";
   const plotSize = plotData?.size || "2.5 hectares";
 
+  const djangoSensorRequest = async (endpoint, method = 'GET', body = null) => {
+  if (!token) {
+    throw new Error('Your login session has expired. Please log in again.');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/sensors/${endpoint}/`, {
+    method,
+    headers: {
+      Authorization: `Token ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+
+  const responseText = await response.text();
+
+  let data = {};
+
+  try {
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    data = { error: responseText };
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      data.error ||
+      data.detail ||
+      data.non_field_errors?.[0] ||
+      `Django request failed (${response.status})`
+    );
+  }
+
+  return data;
+};
+
   const parsedHectares = parseFloat(plotSize) || 2.5;
 
   const [loadingCharts, setLoadingCharts] = useState(false);
   const [showOptimizeModal, setShowOptimizeModal] = useState(false);
+  const [plotAreaInput, setPlotAreaInput] = useState('');
+  const [plotAreaUnit, setPlotAreaUnit] = useState('m2');
+  const [optimizationResult, setOptimizationResult] = useState(null);
+  const [optimizationError, setOptimizationError] = useState('');
   const [showSensorModal, setShowSensorModal] = useState(false);
  
   // BLE Wi-Fi Provisioning States
@@ -119,36 +162,46 @@ export default function MonitorScreen({
   };
 
   // Fetch telemetry history directly from Supabase for functional graphs
-  const fetchTelemetryHistory = useCallback(async () => {
-    if (!activeSensorId && !plotData?.id) return;
-    setLoadingCharts(true);
-    try {
-      let queryUrl = `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.asc&limit=300`;
-      if (activeSensorId) {
-        queryUrl = `${SUPABASE_URL}/rest/v1/soil_records?select=*&sensor_id=eq.${encodeURIComponent(activeSensorId)}&order=timestamp.asc&limit=300`;
-      } else if (plotData?.id) {
-        queryUrl = `${SUPABASE_URL}/rest/v1/soil_records?select=*&plot_id=eq.${encodeURIComponent(plotData.id)}&order=timestamp.asc&limit=300`;
-      }
+const fetchTelemetryHistory = useCallback(async () => {
+  if (!activeSensorId && !plotData?.id) return;
 
-      const response = await fetch(queryUrl, {
-        method: 'GET',
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
+  setLoadingCharts(true);
 
-      if (response.ok) {
-        const data = await response.json();
-        setHistoricalRecords(Array.isArray(data) ? data : []);
-      }
-    } catch (err) {
-      console.log("Error fetching telemetry history from Supabase:", err);
-    } finally {
-      setLoadingCharts(false);
+  try {
+    let queryUrl =
+      `${SUPABASE_URL}/rest/v1/soil_records?select=*&order=timestamp.asc&limit=300`;
+
+    if (activeSensorId) {
+      queryUrl =
+        `${SUPABASE_URL}/rest/v1/soil_records?select=*&sensor_id=eq.${encodeURIComponent(activeSensorId)}&order=timestamp.asc&limit=300`;
+    } else if (plotData?.id) {
+      queryUrl =
+        `${SUPABASE_URL}/rest/v1/soil_records?select=*&plot_id=eq.${encodeURIComponent(plotData.id)}&order=timestamp.asc&limit=300`;
     }
-  }, [activeSensorId, plotData?.id]);
+
+    const response = await fetch(queryUrl, {
+      method: 'GET',
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const responseText = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`Supabase ${response.status}: ${responseText}`);
+    }
+
+    const data = responseText ? JSON.parse(responseText) : [];
+    setHistoricalRecords(Array.isArray(data) ? data : []);
+  } catch (err) {
+    console.log('Error fetching telemetry history from Supabase:', err);
+  } finally {
+    setLoadingCharts(false);
+  }
+}, [activeSensorId, plotData?.id]);
 
   useEffect(() => {
     fetchTelemetryHistory();
@@ -167,132 +220,279 @@ export default function MonitorScreen({
 
   // Process the existing Supabase records for the daily pH chart and rolling 24-hour trend.
   // The Supabase query above is intentionally unchanged; the 24-hour filter is client-side only.
-  useEffect(() => {
-    const records = Array.isArray(historicalRecords) ? historicalRecords : [];
 
-    // 1. Soil pH Levels by Day: average available readings for each weekday.
-    const daysMap = { 0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat' };
-    const dayBuckets = { Mon: [], Tue: [], Wed: [], Thu: [], Fri: [], Sat: [], Sun: [] };
-    const orderedDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+useEffect(() => {
+  const now = new Date();
 
-    records.forEach((rec) => {
-      if (!rec?.timestamp) return;
-      const date = new Date(rec.timestamp);
-      if (Number.isNaN(date.getTime())) return;
-      const dayName = daysMap[date.getDay()];
-      const phVal = parseFloat(rec.ph_level ?? rec.ph);
-      if (Number.isFinite(phVal) && dayBuckets[dayName]) {
-        dayBuckets[dayName].push(phVal);
-      }
-    });
+  // Only include readings from the last 24 hours.
+  const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-    const barLabels = [];
-    const barValues = [];
-    const colorList = [];
+  const recentRecords = historicalRecords
+    .filter((item) => {
+      const ph = Number(item.ph_level ?? item.ph);
+      const timestamp = new Date(item.timestamp);
 
-    // Use the same colors as the pH status description above:
-    // red = highly acidic, amber = moderately acidic/alkaline, blue = optimal.
-    const rgbaForHex = (hex) => {
-      const value = hex.replace('#', '');
-      const r = parseInt(value.slice(0, 2), 16);
-      const g = parseInt(value.slice(2, 4), 16);
-      const b = parseInt(value.slice(4, 6), 16);
-      return (opacity = 1) => `rgba(${r}, ${g}, ${b}, ${opacity})`;
-    };
-
-    orderedDays.forEach((day) => {
-      const values = dayBuckets[day];
-      // Do not create placeholder bars for days without actual Supabase readings.
-      if (values.length === 0) return;
-
-      const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-      const rounded = Number(average.toFixed(1));
-      barLabels.push(day);
-      barValues.push(rounded);
-
-      let color = '#f59e0b';
-      if (rounded < 5.5) color = '#ef4444';
-      else if (rounded <= 6.5) color = '#f59e0b';
-      else if (rounded <= 7.5) color = '#2563eb';
-      else color = '#f59e0b';
-      colorList.push(rgbaForHex(color));
-    });
-
-    const dailyMax = barValues.length > 0 ? Math.max(...barValues) : 0;
-    const dailyAxisTop = dailyMax > 0 ? dailyMax : 1;
-    const dailyAxisLabels = Array.from({ length: 5 }, (_, index) =>
-      (dailyAxisTop - (dailyAxisTop * index / 4)).toFixed(1).replace(/\.0$/, '')
+      return (
+        Number.isFinite(ph) &&
+        ph >= 0 &&
+        ph <= 14 &&
+        !Number.isNaN(timestamp.getTime()) &&
+        timestamp >= cutoff &&
+        timestamp <= now
+      );
+    })
+    .sort(
+      (a, b) =>
+        new Date(a.timestamp).getTime() -
+        new Date(b.timestamp).getTime()
     );
 
-    setDailyPhChartData({
-      labels: barLabels,
-      values: barValues,
-      colors: colorList,
-      yAxisLabels: dailyAxisLabels
+  if (recentRecords.length === 0) {
+    setHourlyData({
+      labels: [],
+      values: [],
+      yAxisLabels: [],
+      minPh: null,
+      maxPh: null,
     });
+    return;
+  }
 
-    // 2. pH Trend Over Time: anchor the 24-hour window to the newest actual
-    // Supabase reading, then include all readings from the 24 hours before it.
-    // This makes the chart useful even when the sensor has not uploaded today.
-    // Missing/invalid timestamps and records without a valid pH are excluded.
-    const timestampedRecords = records
-      .map((rec) => ({
-        rec,
-        timestamp: rec?.timestamp ? new Date(rec.timestamp).getTime() : NaN,
-        ph: parseFloat(rec?.ph_level ?? rec?.ph)
-      }))
-      .filter((item) => Number.isFinite(item.timestamp) && Number.isFinite(item.ph));
+  const CHANGE_THRESHOLD = 0.10;
+  const MIN_INTERVAL_MS = 5 * 60 * 1000;
 
-    const latestTimestamp = timestampedRecords.length > 0
-      ? Math.max(...timestampedRecords.map((item) => item.timestamp))
-      : null;
-    const twentyFourHoursAgo = latestTimestamp === null
-      ? null
-      : latestTimestamp - (24 * 60 * 60 * 1000);
+  const filteredRecords = [];
+  let lastDisplayedPh = null;
+  let lastDisplayedTime = null;
 
-    const recentRecords = latestTimestamp === null
-      ? []
-      : timestampedRecords
-          .filter((item) => item.timestamp >= twentyFourHoursAgo && item.timestamp <= latestTimestamp)
-          .sort((a, b) => a.timestamp - b.timestamp);
+  recentRecords.forEach((item, index) => {
+    const ph = Number(Number(item.ph_level ?? item.ph).toFixed(1));
+    const timestamp = new Date(item.timestamp).getTime();
 
-    const lineLabels = [];
-    const lineValues = [];
-
-    // Keep all qualifying readings. Do not sample, pad, or fall back to older records.
-    recentRecords.forEach((item) => {
-      const phVal = item.ph;
-      const date = new Date(item.timestamp);
-      lineLabels.push(
-        `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-      );
-      lineValues.push(Number(phVal.toFixed(1)));
-    });
-
-    if (lineValues.length === 0) {
-      setHourlyData({ labels: [], values: [], yAxisLabels: [], minPh: null, maxPh: null });
+    // Always preserve the first reading.
+    if (index === 0) {
+      filteredRecords.push(item);
+      lastDisplayedPh = ph;
+      lastDisplayedTime = timestamp;
       return;
     }
 
-    const minPh = Math.min(...lineValues);
-    const maxPh = Math.max(...lineValues);
-    // Chart-kit auto-scales from the supplied values. These matching labels
-    // are drawn separately so the Y-axis stays fixed while the plot scrolls.
-    const axisMin = minPh;
-    const axisMax = maxPh;
-    const yAxisLabels = Array.from({ length: 5 }, (_, index) => {
+    const phChanged =
+      Math.abs(ph - lastDisplayedPh) >= CHANGE_THRESHOLD;
+
+    const enoughTimePassed =
+      timestamp - lastDisplayedTime >= MIN_INTERVAL_MS;
+
+    // Keep readings only when there is a meaningful change
+    // and at least 5 minutes have passed.
+    if (phChanged && enoughTimePassed) {
+      filteredRecords.push(item);
+      lastDisplayedPh = ph;
+      lastDisplayedTime = timestamp;
+    }
+  });
+
+  // Always preserve the latest reading, even if it did not
+  // meet the change threshold.
+  const latestRecord = recentRecords[recentRecords.length - 1];
+
+  if (
+    filteredRecords[filteredRecords.length - 1] !== latestRecord
+  ) {
+    filteredRecords.push(latestRecord);
+  }
+
+  const lineLabels = [];
+  const lineValues = [];
+
+  filteredRecords.forEach((item, index) => {
+    const ph = Number(Number(item.ph_level ?? item.ph).toFixed(1));
+    const date = new Date(item.timestamp);
+
+    // Show labels every few points, plus first and last.
+    const showLabel =
+      index === 0 ||
+      index === filteredRecords.length - 1 ||
+      index % 2 === 0;
+
+    lineLabels.push(
+      showLabel
+        ? `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+        : ''
+    );
+
+    lineValues.push(ph);
+  });
+
+  const minPh = Math.min(...lineValues);
+  const maxPh = Math.max(...lineValues);
+
+  // Add a little padding so small pH differences remain visible.
+  const axisMin = Math.max(
+    0,
+    Math.floor((minPh - 0.2) * 10) / 10
+  );
+
+  const axisMax = Math.min(
+    14,
+    Math.ceil((maxPh + 0.2) * 10) / 10
+  );
+
+  const yAxisLabels = Array.from(
+    { length: 5 },
+    (_, index) => {
       const value = axisMax - ((axisMax - axisMin) * index / 4);
       return value.toFixed(1);
-    });
+    }
+  );
+  
 
-    setHourlyData({
-      labels: lineLabels,
-      values: lineValues,
-      yAxisLabels,
-      minPh,
-      maxPh
+  setHourlyData({
+    labels: lineLabels,
+    values: lineValues,
+    yAxisLabels,
+    minPh,
+    maxPh,
+  });
+}, [historicalRecords]);
+
+
+// Process daily pH readings for Soil pH Levels by Day.
+useEffect(() => {
+  const now = new Date();
+  const cutoff = new Date(
+    now.getTime() - 7 * 24 * 60 * 60 * 1000
+  );
+
+  // Get valid pH readings from the last 7 days.
+  const recentRecords = historicalRecords
+    .filter((item) => {
+      const ph = Number(item.ph_level ?? item.ph);
+      const timestamp = new Date(item.timestamp);
+
+      return (
+        Number.isFinite(ph) &&
+        ph >= 0 &&
+        ph <= 14 &&
+        !Number.isNaN(timestamp.getTime()) &&
+        timestamp >= cutoff &&
+        timestamp <= now
+      );
+    })
+    .sort(
+      (a, b) =>
+        new Date(a.timestamp).getTime() -
+        new Date(b.timestamp).getTime()
+    );
+
+  if (recentRecords.length === 0) {
+    setDailyPhChartData({
+      labels: [],
+      values: [],
+      colors: [],
+      yAxisLabels: ['0', '0', '0', '0', '0'],
     });
-  }, [historicalRecords]);
+    return;
+  }
+
+  // Group readings by day.
+  const dailyGroups = {};
+
+  recentRecords.forEach((item) => {
+    const ph = Number(item.ph_level ?? item.ph);
+    const date = new Date(item.timestamp);
+
+    const dayKey = [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0'),
+    ].join('-');
+
+    if (!dailyGroups[dayKey]) {
+      dailyGroups[dayKey] = [];
+    }
+
+    dailyGroups[dayKey].push(ph);
+  });
+
+  // Calculate the average pH for each day.
+  const dailyEntries = Object.entries(dailyGroups);
+
+  const labels = dailyEntries.map(([day]) => {
+    const [year, month, date] = day.split('-');
+
+    return new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(date)
+    ).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    });
+  });
+
+  const values = dailyEntries.map(([, readings]) => {
+    const average =
+      readings.reduce((sum, value) => sum + value, 0) /
+      readings.length;
+
+    return Number(average.toFixed(1));
+  });
+
+  // Assign colors according to the average pH.
+const colors = values.map((ph) => {
+  let hex;
+
+  if (ph < 5.5) {
+    hex = '#ef4444';
+  } else if (ph <= 7.0) {
+    hex = '#22c55e';
+  } else {
+    hex = '#f59e0b';
+  }
+
+  const red = parseInt(hex.slice(1, 3), 16);
+  const green = parseInt(hex.slice(3, 5), 16);
+  const blue = parseInt(hex.slice(5, 7), 16);
+
+  return (opacity = 1) =>
+    `rgba(${red}, ${green}, ${blue}, ${opacity})`;
+});
+
+  // Calculate the Y-axis scale.
+  const minPh = Math.min(...values);
+  const maxPh = Math.max(...values);
+
+  const axisMin = Math.max(
+    0,
+    Math.floor((minPh - 0.5) * 2) / 2
+  );
+
+  const axisMax = Math.min(
+    14,
+    Math.ceil((maxPh + 0.5) * 2) / 2
+  );
+
+  const yAxisLabels = Array.from(
+    { length: 5 },
+    (_, index) => {
+      const value =
+        axisMax - ((axisMax - axisMin) * index) / 4;
+
+      return value.toFixed(1);
+    }
+  );
+
+  // Update the daily chart.
+  setDailyPhChartData({
+    labels,
+    values,
+    colors,
+    yAxisLabels,
+  });
+}, [historicalRecords]);
+
+
 
   const fetchSupabaseLiveRecord = async (targetSensorId) => {
     const sId = targetSensorId || activeSensorId;
@@ -302,17 +502,17 @@ export default function MonitorScreen({
     }
 
     try {
-      const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/soil_records?sensor_id=eq.${encodeURIComponent(sId)}&order=timestamp.desc&limit=1`,
-        {
-          method: 'GET',
-          headers: {
-            'apikey': SUPABASE_KEY,
-            'Authorization': `Bearer ${SUPABASE_KEY}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+const response = await fetch(
+  `${SUPABASE_URL}/rest/v1/soil_records?sensor_id=eq.${encodeURIComponent(sId)}&order=timestamp.desc&limit=1`,
+  {
+    method: 'GET',
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+  }
+);
 
       if (response.ok) {
         const data = await response.json();
@@ -338,337 +538,555 @@ export default function MonitorScreen({
 
   const hasSensor = Boolean(activeSensorId && activeSensorId !== "N/A");
 
-  const updateSupabaseFarmPlotSensor = async (plotId, newSensorId) => {
-    if (!plotId) return;
-    try {
+  // IoT sensor ownership, discovery, assignment, and commands are handled
+  // directly through Supabase. Django is not called by these sensor actions.
+  const supabaseHeaders = {
+    apikey: SUPABASE_KEY,
+    Authorization: `Bearer ${SUPABASE_KEY}`,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+
+  // The logged-in Django account ID is used only as an ownership value in
+  // the Supabase registry. Plot ownership is taken from the loaded plot data
+  // when available (sub-farmers inherit their owner's account scope).
+  const currentAccountId = currentAdminId != null ? String(currentAdminId) : null;
+const plotOwnerId = currentAccountId;
+
+  const supabaseRequest = async (table, query = '', options = {}) => {
+    const { method = 'GET', body, prefer = 'return=representation' } = options;
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/soil_api_farmplot?id=eq.${encodeURIComponent(plotId)}`,
+        `${SUPABASE_URL}/rest/v1/${table}${query ? `?${query}` : ''}`,
         {
-          method: 'PATCH',
-          headers: {
-            'apikey': SUPABASE_KEY,
-            'Authorization': `Bearer ${SUPABASE_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal'
-          },
-          body: JSON.stringify({ sensor_id: newSensorId })
+          method,
+          headers: { ...supabaseHeaders, Prefer: prefer },
+          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
         }
       );
+      const responseText = await response.text();
+      let data = null;
+      try { data = responseText ? JSON.parse(responseText) : null; }
+      catch { data = responseText; }
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Supabase plot update failed (${response.status}): ${errorText}`);
+        const detail = typeof data === 'string'
+          ? data
+          : data?.message || data?.details || data?.hint || data?.error || responseText;
+        throw new Error(`Supabase table request failed (${response.status}): ${detail}`);
       }
-    } catch (err) {
-      console.log("Error updating Supabase soil_api_farmplot sensor_id:", err);
-    }
+      return data;
+    };
+
+  const updateSupabaseFarmPlotSensor = async (plotId, newSensorId) => {
+    if (!plotId) throw new Error('The plot ID is missing.');
+    await supabaseRequest(
+      'soil_api_farmplot',
+      `id=eq.${encodeURIComponent(plotId)}`,
+      { method: 'PATCH', body: { sensor_id: newSensorId }, prefer: 'return=minimal' }
+    );
   };
 
   const updateSupabasePlotId = async (sensorId, plotId) => {
-    if (!sensorId) return;
-    try {
-      const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/soil_records?sensor_id=eq.${encodeURIComponent(sensorId)}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'apikey': SUPABASE_KEY,
-            'Authorization': `Bearer ${SUPABASE_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal'
-          },
-          body: JSON.stringify({ plot_id: plotId })
-        }
-      );
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Supabase telemetry update failed (${response.status}): ${errorText}`);
-      }
-    } catch (err) {
-      console.log("Error updating Supabase plot_id:", err);
-    }
+    if (!sensorId) throw new Error('The sensor ID is missing.');
+    await supabaseRequest(
+      'soil_records',
+      `sensor_id=eq.${encodeURIComponent(sensorId)}`,
+      { method: 'PATCH', body: { plot_id: plotId }, prefer: 'return=minimal' }
+    );
   };
 
-  const handleConnectOrDisconnect = async () => {
-    if (hasSensor) {
-      showAlert({
-        title: 'Disconnect Sensor',
-        message: `Are you sure you want to disconnect sensor "${activeSensorId}" from ${currentPlot}? This will reset the device's Wi-Fi settings.`,
-        type: 'danger',
-        showCancel: true,
-        confirmText: 'Disconnect',
-        onConfirm: async () => {
-          const prevSensorId = activeSensorId;
-          const plotId = plotData?.id;
+const fetchAvailableSupabaseSensors = async () => {
+  if (!plotData?.id) {
+    throw new Error('The plot ID is missing.');
+  }
 
-          if (!plotId || !prevSensorId) {
-            showAlert({
-              title: 'Unable to Disconnect',
-              message: 'The plot ID or assigned sensor ID is missing. Please refresh and try again.',
-              type: 'danger'
-            });
-            return;
-          }
+  // Get available registered sensors from Django.
+  const registryResponse = await djangoSensorRequest('available');
 
-          try {
-            const headers = {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            };
-            if (token) headers.Authorization = `Token ${token}`;
-
-            const backendResponse = await fetch(`${API_BASE_URL}/api/sensors/disconnect/`, {
-              method: 'POST',
-              headers,
-              body: JSON.stringify({
-                sensor_id: prevSensorId,
-                plot_id: plotId,
-              }),
-            });
-
-            const responseText = await backendResponse.text();
-            let responseData = {};
-            try {
-              responseData = responseText ? JSON.parse(responseText) : {};
-            } catch {
-              responseData = { detail: responseText };
-            }
-
-            if (!backendResponse.ok) {
-              throw new Error(
-                responseData.error ||
-                responseData.detail ||
-                `Django could not disconnect the sensor (${backendResponse.status}).`
-              );
-            }
-
-            setSupabaseLatestRecord(null);
-
-            await updateSupabasePlotId(prevSensorId, null);
-            await updateSupabaseFarmPlotSensor(plotId, null);
-
-            if (onDisconnectSensor) onDisconnectSensor(plotId);
-            if (onRemoveSensor) onRemoveSensor(plotId);
-            if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, null);
-            if (onRefreshData) await onRefreshData();
-
-            showAlert({
-              title: 'Disconnected',
-              message: `Sensor ${prevSensorId} was disconnected. Its registration remains in your account inventory.`,
-              type: 'success'
-            });
-          } catch (err) {
-            console.log('Error disconnecting sensor:', err);
-            showAlert({
-              title: 'Disconnect Failed',
-              message: err.message || 'Django could not disconnect this sensor. Please try again.',
-              type: 'danger'
-            });
-          }
-        }
-      });
-      return;
-    }
-
-    setConnecting(true);
-    setShowSensorModal(true);
-
-    try {
-      if (!token || !plotData?.id) {
-        throw new Error('Your login session or plot ID is missing. Please sign in again.');
-      }
-
-      const response = await fetch(
-        `${API_BASE_URL}/api/sensors/available/?plot_id=${encodeURIComponent(plotData.id)}`,
-        {
-          method: 'GET',
-          headers: {
-            Authorization: `Token ${token}`,
-            Accept: 'application/json',
-          },
-        }
+  const devices = Array.isArray(registryResponse)
+    ? registryResponse
+    : (
+        registryResponse.results ||
+        registryResponse.sensors ||
+        registryResponse.available_sensors ||
+        []
       );
 
-      const responseText = await response.text();
-      let responseData = [];
-      try {
-        responseData = responseText ? JSON.parse(responseText) : [];
-      } catch {
-        throw new Error('The server returned an invalid available-sensors response.');
-      }
+  // Continue reading sensor telemetry directly from Supabase.
+  const telemetry = await supabaseRequest(
+    'soil_records',
+    'select=sensor_id,battery_percentage,timestamp,plot_id&sensor_id=not.is.null&order=timestamp.desc&limit=1000'
+  );
 
-      if (!response.ok) {
-        throw new Error(
-          responseData.error || responseData.detail ||
-          `Could not load your sensors (${response.status}).`
-        );
-      }
+  // Keep only the newest telemetry record for each sensor.
+  const latestBySensor = new Map();
 
-      setAvailableSensors(Array.isArray(responseData) ? responseData : []);
-    } catch (error) {
-      console.log('Error fetching account-owned available sensors:', error);
-      setAvailableSensors([]);
-      showAlert({
-        title: 'Unable to Load Sensors',
-        message: error.message || 'Could not retrieve sensors for this account.',
-        type: 'danger',
-      });
-    } finally {
-      setConnecting(false);
-    }
-  };
+  (Array.isArray(telemetry) ? telemetry : []).forEach((row) => {
+    const sid = row?.sensor_id
+      ? String(row.sensor_id).trim()
+      : '';
 
-  const handleSelectSensor = async (sensorId) => {
-    const plotId = plotData?.id;
-    if (!plotId || !sensorId) {
-      showAlert({
-        title: 'Unable to Link Sensor',
-        message: 'The plot or sensor ID is missing. Please refresh and try again.',
-        type: 'danger'
-      });
-      return;
-    }
+    if (!sid || latestBySensor.has(sid)) return;
 
-    setConnecting(true);
-    try {
-      const headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+    latestBySensor.set(sid, row);
+  });
+
+  // Build the available sensor list using Django's ownership records.
+  const available = (Array.isArray(devices) ? devices : [])
+    .filter((device) =>
+  device?.sensor_id && device.assigned_plot_id == null
+)
+    .map((device) => {
+      const sid = String(device.sensor_id).trim();
+      const row = latestBySensor.get(sid);
+
+      // Do not show a sensor whose latest telemetry says it is assigned.
+      if (row?.plot_id != null) return null;
+
+      return {
+        sensor_id: sid,
+        battery: row?.battery_percentage ?? 'N/A',
+        timestamp: row?.timestamp ?? null,
       };
-      if (token) headers.Authorization = `Token ${token}`;
+    })
+    .filter(Boolean);
 
-      const backendResponse = await fetch(`${API_BASE_URL}/api/sensors/claim/`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          sensor_id: sensorId,
-          plot_id: plotId,
-        })
-      });
+  return available.sort((a, b) =>
+    String(a.sensor_id).localeCompare(String(b.sensor_id))
+  );
+};
 
-      const responseText = await backendResponse.text();
-      let responseData = {};
-      try {
-        responseData = responseText ? JSON.parse(responseText) : {};
-      } catch {
-        responseData = { detail: responseText };
-      }
+const readBleSensorId = async (connectedDevice) => {
+  const SERVICE_UUID =
+    '00004faf-0000-1000-8000-00805f9b34fb';
 
-      if (!backendResponse.ok) {
-        throw new Error(
-          responseData.error ||
-          responseData.detail ||
-          `Django could not claim the sensor (${backendResponse.status}).`
-        );
-      }
+  const SENSOR_ID_CHAR_UUID =
+    '0000beb6-0000-1000-8000-00805f9b34fb';
 
-      if (onUpdatePlotSensor) onUpdatePlotSensor(plotId, sensorId);
+  const characteristic =
+    await connectedDevice.readCharacteristicForService(
+      SERVICE_UUID,
+      SENSOR_ID_CHAR_UUID
+    );
 
-      await updateSupabaseFarmPlotSensor(plotId, sensorId);
-      await updateSupabasePlotId(sensorId, plotId);
+  if (!characteristic.value) {
+    throw new Error('Could not read the sensor ID.');
+  }
 
-      setShowSensorModal(false);
-      await fetchSupabaseLiveRecord(sensorId);
-      fetchTelemetryHistory();
-      if (onRefreshData) await onRefreshData();
+  const sensorId = Buffer
+    .from(characteristic.value, 'base64')
+    .toString('utf8')
+    .trim();
 
-      showAlert({
-        title: 'Sensor Linked',
-        message: `Successfully linked ${sensorId} to ${currentPlot}. The assignment has been saved.`,
-        type: 'success'
-      });
-    } catch (error) {
-      console.log('Error linking sensor:', error);
-      showAlert({
-        title: 'Sensor Not Linked',
-        message: error.message || 'The sensor assignment could not be saved. Please try again.',
-        type: 'danger'
-      });
-    } finally {
-      setConnecting(false);
+  if (!/^SENSOR-[A-F0-9]{12}$/i.test(sensorId)) {
+    throw new Error('The ESP32 returned an invalid sensor ID.');
+  }
+
+  return sensorId;
+};
+
+const handleConnectOrDisconnect = async () => {
+  if (hasSensor) {
+    showAlert({
+      title: 'Disconnect Sensor',
+      message: `Are you sure you want to disconnect sensor "${activeSensorId}" from ${currentPlot}? This will remove its assignment from this farm plot.`,
+      type: 'danger',
+      showCancel: true,
+      confirmText: 'Disconnect',
+
+      onConfirm: async () => {
+        const prevSensorId = activeSensorId;
+        const plotId = plotData?.id;
+
+        if (!plotId || !prevSensorId) {
+          showAlert({
+            title: 'Unable to Disconnect',
+            message: 'The plot ID or assigned sensor ID is missing. Please refresh and try again.',
+            type: 'danger',
+          });
+          return;
+        }
+
+        try {
+          const result = await djangoSensorRequest(
+            'disconnect',
+            'POST',
+            {
+              sensor_id: prevSensorId,
+              plot_id: plotId,
+            }
+          );
+
+          console.log('Django disconnect result:', result);
+
+          setSupabaseLatestRecord(null);
+
+          if (onUpdatePlotSensor) {
+            onUpdatePlotSensor(plotId, null);
+          }
+
+          if (onRefreshData) {
+            await onRefreshData();
+          }
+
+          showAlert({
+            title: 'Disconnected',
+            message: `Sensor ${prevSensorId} was disconnected. Its ownership was retained.`,
+            type: 'success',
+          });
+
+        } catch (error) {
+          console.log('Error disconnecting sensor:', error);
+
+          showAlert({
+            title: 'Disconnect Failed',
+            message: error.message || 'Could not disconnect the sensor.',
+            type: 'danger',
+          });
+        }
+      },
+    });
+
+    return;
+  }
+
+  setConnecting(true);
+  setShowSensorModal(true);
+
+  try {
+    const sensors = await fetchAvailableSupabaseSensors();
+
+    setAvailableSensors(sensors);
+
+    if (sensors.length === 0) {
+      console.log('No available registered sensors found.');
     }
-  };
 
-  const startBleScan = () => {
+  } catch (error) {
+    console.log('Error fetching available sensors:', error);
+
+    setAvailableSensors([]);
+
+    showAlert({
+      title: 'Unable to Load Sensors',
+      message: error.message || 'Could not retrieve available sensors.',
+      type: 'danger',
+    });
+
+  } finally {
+    setConnecting(false);
+  }
+};
+
+
+const registerAndClaimSensor = async (sensorId, plotId) => {
+  await djangoSensorRequest('register', 'POST', {
+    sensor_id: sensorId,
+  });
+
+  await djangoSensorRequest('claim', 'POST', {
+    sensor_id: sensorId,
+    plot_id: plotId,
+  });
+};
+
+
+
+const handleSelectSensor = async (sensorId) => {
+  const plotId = plotData?.id;
+
+  if (!plotId || !sensorId) {
+    showAlert({
+      title: 'Unable to Link Sensor',
+      message: 'The plot or sensor ID is missing. Please refresh and try again.',
+      type: 'danger',
+    });
+    return;
+  }
+
+  setConnecting(true);
+
+  try {
+    await registerAndClaimSensor(sensorId, plotId);
+
+    showAlert({
+      title: 'Sensor Connected',
+      message: `${sensorId} was successfully connected to ${currentPlot}.`,
+      type: 'success',
+    });
+
+    setShowSensorModal(false);
+    setSupabaseLatestRecord(null);
+
+    if (onUpdatePlotSensor) {
+      onUpdatePlotSensor(plotId, sensorId);
+    }
+
+    if (onRefreshData) {
+      await onRefreshData();
+    }
+
+  } catch (error) {
+    showAlert({
+      title: 'Unable to Connect Sensor',
+      message: error.message,
+      type: 'danger',
+    });
+  } finally {
+    setConnecting(false);
+  }
+};
+
+
+
+const startBleScan = async () => {
+  try {
     setScannedDevices([]);
     setShowWifiModal(true);
-    bleManager.startDeviceScan(null, null, (error, device) => {
-      if (error) {
-        console.log(error);
+
+    if (Platform.OS === 'android' && Platform.Version >= 31) {
+      const permissions = await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      ]);
+
+      const scanGranted =
+        permissions[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] ===
+        PermissionsAndroid.RESULTS.GRANTED;
+
+      const connectGranted =
+        permissions[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] ===
+        PermissionsAndroid.RESULTS.GRANTED;
+
+      if (!scanGranted || !connectGranted) {
+        showAlert({
+          title: 'Bluetooth Permission Required',
+          message: 'Allow Nearby Devices permissions to scan for your JJMAP sensor.',
+          type: 'warning',
+        });
         return;
       }
-     
-      const deviceName = device?.name || device?.localName;
-     
-      if (deviceName && deviceName.includes("JJMAP")) {
-        setScannedDevices(prev => {
-          if (!prev.some(d => d.id === device.id)) {
-            return [...prev, device];
-          }
-          return prev;
-        });
-      }
-    });
-  };
+    }
 
-  const configureDeviceWifi = async (device) => {
-    if (!wifiSsid.trim() || !wifiPass.trim()) {
-      showAlert({ title: 'Error', message: 'Please enter both Wi-Fi SSID and Password.', type: 'warning' });
+    const state = await bleManager.state();
+
+    if (state !== 'PoweredOn') {
+      showAlert({
+        title: 'Bluetooth Disabled',
+        message: 'Please turn on Bluetooth before scanning.',
+        type: 'warning',
+      });
       return;
     }
 
-    try {
-      setIsProvisioning(true);
+    console.log('Scanning for JJMAP ESP32 sensors...');
+
+    bleManager.stopDeviceScan();
+
+    bleManager.startDeviceScan(
+      null,
+      { allowDuplicates: false },
+      (error, device) => {
+        if (error) {
+          console.log('BLE SCAN ERROR:', error.message);
+          bleManager.stopDeviceScan();
+
+          showAlert({
+            title: 'Bluetooth Scan Failed',
+            message: error.message,
+            type: 'danger',
+          });
+          return;
+        }
+
+        if (!device) return;
+
+        const deviceName = device.name || device.localName || '';
+
+        if (deviceName === 'JJMAP_Setup_001') {
+          console.log('JJMAP SENSOR FOUND:', device.id);
+
+          setScannedDevices(previous => {
+            if (previous.some(item => item.id === device.id)) {
+              return previous;
+            }
+
+            return [...previous, device];
+          });
+        }
+      }
+    );
+
+    setTimeout(() => {
       bleManager.stopDeviceScan();
-      const connectedDevice = await device.connect();
-      await connectedDevice.discoverAllServicesAndCharacteristics();
+      console.log('BLE scan completed.');
+    }, 15000);
 
-      const SERVICE_UUID = "00004faf-0000-1000-8000-00805f9b34fb";
-      const SSID_CHAR_UUID = "0000beb5-0000-1000-8000-00805f9b34fb";
-      const PASS_CHAR_UUID = "00001b54-0000-1000-8000-00805f9b34fb";
+  } catch (error) {
+    console.log('BLE INITIALIZATION ERROR:', error);
 
-      const base64Ssid = Buffer.from(wifiSsid).toString('base64');
-      const base64Pass = Buffer.from(wifiPass).toString('base64');
+    showAlert({
+      title: 'Bluetooth Error',
+      message: error.message || 'Unable to start Bluetooth scanning.',
+      type: 'danger',
+    });
+  }
+};
 
-      await connectedDevice.writeCharacteristicWithResponseForService(
-        SERVICE_UUID, SSID_CHAR_UUID, base64Ssid
-      );
-     
-      await delay(400);
 
-      try {
-        await connectedDevice.writeCharacteristicWithResponseForService(
-          SERVICE_UUID, PASS_CHAR_UUID, base64Pass
-        );
-      } catch (passErr) {
-        console.log("ESP32 rebooted on password write:", passErr.message);
-      }
 
-      showAlert({
-        title: 'Success',
-        message: 'Wi-Fi configuration sent! The ESP32 is rebooting and connecting to WiFi.',
-        type: 'success'
-      });
-      setShowWifiModal(false);
-      setWifiSsid('');
-      setWifiPass('');
-    } catch (err) {
-      const errLower = (err.message || "").toLowerCase();
-      if (errLower.includes("disconnect") || errLower.includes("cancel") || errLower.includes("reset") || errLower.includes("device")) {
-        showAlert({
-          title: 'Success',
-          message: 'Wi-Fi configuration sent! The ESP32 is rebooting and connecting to WiFi.',
-          type: 'success'
-        });
-        setShowWifiModal(false);
-        setWifiSsid('');
-        setWifiPass('');
-      } else {
-        showAlert({ title: 'Provisioning Error', message: err.message, type: 'danger' });
-      }
-    } finally {
-      setIsProvisioning(false);
+
+const configureDeviceWifi = async (device) => {
+  if (!wifiSsid.trim() || !wifiPass.trim()) {
+    showAlert({
+      title: 'Error',
+      message: 'Please enter both Wi-Fi SSID and Password.',
+      type: 'warning',
+    });
+    return;
+  }
+
+  const plotId = plotData?.id;
+
+  if (!plotId) {
+    showAlert({
+      title: 'Missing Farm Plot',
+      message: 'Please select a farm plot before configuring the sensor.',
+      type: 'danger',
+    });
+    return;
+  }
+
+  let connectedDevice = null;
+
+  try {
+    setIsProvisioning(true);
+    bleManager.stopDeviceScan();
+
+    // 1. Connect to ESP32.
+
+connectedDevice = await device.connect();
+
+console.log('BLE CONNECTED:', connectedDevice.id);
+
+await connectedDevice.discoverAllServicesAndCharacteristics();
+
+console.log('BLE SERVICE DISCOVERY COMPLETED');
+
+const services = await connectedDevice.services();
+
+console.log(
+  'DISCOVERED SERVICES:',
+  services.map(service => service.uuid)
+);
+
+const serviceUUID = '00004faf-0000-1000-8000-00805f9b34fb';
+
+const characteristics =
+  await connectedDevice.characteristicsForService(serviceUUID);
+
+console.log(
+  'DISCOVERED CHARACTERISTICS:',
+  characteristics.map(characteristic => ({
+    uuid: characteristic.uuid,
+    readable: characteristic.isReadable,
+    writable: characteristic.isWritableWithResponse,
+  }))
+);
+
+const sensorId = await readBleSensorId(connectedDevice);
+
+console.log('DETECTED SENSOR ID:', sensorId);
+
+    // 3. Register sensor and assign it to the selected farm plot.
+    await registerAndClaimSensor(sensorId, plotId);
+
+    console.log('Sensor successfully registered and assigned:', sensorId);
+
+    // Update the app's plot information.
+    setSupabaseLatestRecord(null);
+
+    if (onUpdatePlotSensor) {
+      onUpdatePlotSensor(plotId, sensorId);
     }
-  };
+
+    if (onRefreshData) {
+      try {
+        await onRefreshData();
+      } catch (refreshError) {
+        console.log('Plot refresh warning:', refreshError.message);
+      }
+    }
+
+    // 4. Prepare Wi-Fi credentials.
+    const SERVICE_UUID = '00004faf-0000-1000-8000-00805f9b34fb';
+    const SSID_CHAR_UUID = '0000beb5-0000-1000-8000-00805f9b34fb';
+    const PASS_CHAR_UUID = '00001b54-0000-1000-8000-00805f9b34fb';
+
+    const base64Ssid = Buffer.from(wifiSsid).toString('base64');
+    const base64Pass = Buffer.from(wifiPass).toString('base64');
+
+    // 5. Send Wi-Fi SSID.
+    await connectedDevice.writeCharacteristicWithResponseForService(
+      SERVICE_UUID,
+      SSID_CHAR_UUID,
+      base64Ssid
+    );
+
+    await delay(400);
+
+    // 6. Send Wi-Fi password.
+    try {
+      await connectedDevice.writeCharacteristicWithResponseForService(
+        SERVICE_UUID,
+        PASS_CHAR_UUID,
+        base64Pass
+      );
+
+    } catch (passError) {
+      const message = (passError.message || '').toLowerCase();
+
+      // The ESP32 may disconnect because it is restarting.
+      const expectedRestart =
+        message.includes('disconnect') ||
+        message.includes('disconnected') ||
+        message.includes('gatt');
+
+      if (!expectedRestart) {
+        throw passError;
+      }
+
+      console.log(
+        'BLE disconnected during password write. ESP32 may be restarting:',
+        passError.message
+      );
+    }
+
+    // 7. Finish provisioning.
+    showAlert({
+      title: 'Sensor Configured',
+      message:
+        `${sensorId} has been registered and assigned to ${currentPlot}. ` +
+        'Wi-Fi credentials were submitted. Check the ESP32 Serial Monitor to confirm its Wi-Fi connection.',
+      type: 'success',
+    });
+
+    setShowWifiModal(false);
+    setWifiSsid('');
+    setWifiPass('');
+
+  } catch (error) {
+    console.log('SENSOR PROVISIONING ERROR:', error);
+
+    showAlert({
+      title: 'Provisioning Error',
+      message: error.message || 'Unable to configure the ESP32 sensor.',
+      type: 'danger',
+    });
+
+  } finally {
+    setIsProvisioning(false);
+  }
+};
 
   const getSensorVal = (rec, ...keys) => {
     if (!rec) return null;
@@ -695,95 +1113,143 @@ export default function MonitorScreen({
     battery: getSensorVal(latestRecord, 'battery_percentage', 'battery', 'battery_level', 'batteryLevel'),
   };
 
+  // Status bands follow the supplied JJMAP specification. Temperature has no
+  // approved range in that specification, so it is displayed without grading.
+  const status = (label, color) => ({ label, color });
+  const unknownStatus = status('Unknown', '#64748b');
+
   const getPhStatus = (ph) => {
-    if (ph === null || ph === undefined) return { label: 'Unknown', color: '#64748b' };
-    const num = parseFloat(ph);
-    if (num < 5.5) return { label: 'Highly Acidic', color: '#ef4444' };
-    if (num <= 6.5) return { label: 'Mod. Acidic', color: '#f59e0b' };
-    if (num <= 7.5) return { label: 'Optimal', color: '#2563eb' };
-    return { label: 'Alkaline', color: '#f59e0b' };
+    if (!Number.isFinite(ph)) return unknownStatus;
+    if (ph < 6.6) return status('Acidic', '#ef4444');
+    if (ph <= 7.0) return status('Neutral', '#16a34a');
+    return status('Alkaline', '#f59e0b');
   };
-
-  const getMoistureStatus = (val) => {
-    if (val === null || val === undefined) return { label: 'Unknown', color: '#64748b' };
-    const num = parseFloat(val);
-    if (num < 20) return { label: 'Critical Low', color: '#ef4444' };
-    if (num < 40) return { label: 'Low Moisture', color: '#f59e0b' };
-    if (num <= 80) return { label: 'Optimal', color: '#2563eb' };
-    return { label: 'High Moisture', color: '#f59e0b' };
+  const getMoistureStatus = (value) => {
+    if (!Number.isFinite(value)) return unknownStatus;
+    if (value < 5) return status('Low', '#ef4444');
+    if (value <= 40) return status('Normal', '#16a34a');
+    if (value <= 50) return status('High', '#f59e0b');
+    return status('Unusual', '#ef4444');
   };
-
-  const getEcStatus = (ec) => {
-    if (ec === null || ec === undefined) return { label: 'Unknown', color: '#64748b' };
-    const num = parseFloat(ec);
-    if (num < 200) return { label: 'Critical Low', color: '#ef4444' };
-    if (num < 500) return { label: 'Low Nutrients', color: '#f59e0b' };
-    if (num <= 1500) return { label: 'Optimal', color: '#2563eb' };
-    return { label: 'High Salinity', color: '#ef4444' };
+  const getEcStatus = (value) => {
+    if (!Number.isFinite(value)) return unknownStatus;
+    if (value < 100) return status('Below ideal', '#f59e0b');
+    if (value <= 1000) return status('Ideal', '#16a34a');
+    if (value <= 2500) return status('Above ideal', '#f59e0b');
+    return status('Too salty', '#ef4444');
   };
-
-  const getTempStatus = (val) => {
-    if (val === null || val === undefined) return { label: 'Unknown', color: '#64748b' };
-    const num = parseFloat(val);
-    if (num < 10) return { label: 'Critical Low', color: '#ef4444' };
-    if (num < 18) return { label: 'Low Temp', color: '#f59e0b' };
-    if (num <= 32) return { label: 'Optimal', color: '#2563eb' };
-    if (num <= 38) return { label: 'High Temp', color: '#f59e0b' };
-    return { label: 'Critical High', color: '#ef4444' };
+  const getTempStatus = (value) => {
+    if (!Number.isFinite(value)) return unknownStatus;
+    return status('Monitoring only', '#64748b');
   };
-
-  const getNStatus = (val) => {
-    if (val === null || val === undefined) return { label: 'Unknown', color: '#64748b' };
-    const num = parseFloat(val);
-    if (num < 20) return { label: 'Critical Low', color: '#ef4444' };
-    if (num < 50) return { label: 'Low', color: '#f59e0b' };
-    if (num <= 200) return { label: 'Optimal', color: '#2563eb' };
-    return { label: 'High', color: '#f59e0b' };
+  const getNStatus = (value) => {
+    if (!Number.isFinite(value)) return unknownStatus;
+    if (value < 30) return status('Low', '#ef4444');
+    if (value <= 150) return status('Medium', '#16a34a');
+    return status('High', '#f59e0b');
   };
-
-  const getPStatus = (val) => {
-    if (val === null || val === undefined) return { label: 'Unknown', color: '#64748b' };
-    const num = parseFloat(val);
-    if (num < 10) return { label: 'Critical Low', color: '#ef4444' };
-    if (num < 25) return { label: 'Low', color: '#f59e0b' };
-    if (num <= 100) return { label: 'Optimal', color: '#2563eb' };
-    return { label: 'High', color: '#f59e0b' };
+  const getPStatus = (value, soilPh) => {
+    if (!Number.isFinite(value) || !Number.isFinite(soilPh)) return unknownStatus;
+    const lowLimit = soilPh < 7.3 ? 10 : 7;
+    const mediumLimit = soilPh < 7.3 ? 20 : 25;
+    if (value <= lowLimit) return status('Low', '#ef4444');
+    if (value <= mediumLimit) return status('Medium', '#16a34a');
+    return status('High', '#f59e0b');
   };
-
-  const getKStatus = (val) => {
-    if (val === null || val === undefined) return { label: 'Unknown', color: '#64748b' };
-    const num = parseFloat(val);
-    if (num < 20) return { label: 'Critical Low', color: '#ef4444' };
-    if (num < 50) return { label: 'Low', color: '#f59e0b' };
-    if (num <= 250) return { label: 'Optimal', color: '#2563eb' };
-    return { label: 'High', color: '#f59e0b' };
+  const getKStatus = (value) => {
+    if (!Number.isFinite(value)) return unknownStatus;
+    if (value <= 117) return status('Low', '#ef4444');
+    if (value <= 235) return status('Medium', '#16a34a');
+    return status('High', '#f59e0b');
   };
-
   const getNpkOverallStatus = (nStat, pStat, kStat) => {
-    if (nStat.color === '#ef4444' || pStat.color === '#ef4444' || kStat.color === '#ef4444') {
-      return { label: 'Critical Deficit', color: '#ef4444' };
-    }
-    if (nStat.color === '#f59e0b' || pStat.color === '#f59e0b' || kStat.color === '#f59e0b') {
-      return { label: 'Needs Attention', color: '#f59e0b' };
-    }
-    if (nStat.color === '#2563eb' && pStat.color === '#2563eb' && kStat.color === '#2563eb') {
-      return { label: 'Optimal Range', color: '#2563eb' };
-    }
-    return { label: 'Unknown', color: '#64748b' };
+    const grades = [nStat.label, pStat.label, kStat.label];
+    if (grades.includes('Unknown')) return unknownStatus;
+    if (grades.includes('Low')) return status('Nutrient Deficiency', '#ef4444');
+    if (grades.includes('High')) return status('High Nutrient Level', '#f59e0b');
+    return status('Optimal Range', '#16a34a');
   };
 
   const phStatus = getPhStatus(sensors.ph);
   const moistureStatus = getMoistureStatus(sensors.moisture);
   const ecStatus = getEcStatus(sensors.ec);
   const tempStatus = getTempStatus(sensors.temp);
-
   const nStatus = getNStatus(sensors.nitrogen);
-  const pStatus = getPStatus(sensors.phosphorus);
+  const pStatus = getPStatus(sensors.phosphorus, sensors.ph);
   const kStatus = getKStatus(sensors.potassium);
   const npkStatus = getNpkOverallStatus(nStatus, pStatus, kStatus);
 
-  const limeSacksNeeded = Math.max(1, Math.round(parsedHectares * 1.5));
-  const ureaSacksNeeded = Math.max(1, Math.round(parsedHectares * 0.8));
+  const phAdvisory = !Number.isFinite(sensors.ph)
+    ? 'A valid pH reading is required before calculating fertilizer recommendations.'
+    : sensors.ph < 6.0
+      ? 'Soil is acidic. Liming may be needed. Ask an agronomist for the lime rate.'
+      : sensors.ph > 7.0
+        ? 'Soil is alkaline. Nutrient availability may be reduced.'
+        : null;
+
+  const gradeN = (value) => value < 30 ? 'Low' : value <= 150 ? 'Medium' : 'High';
+  const gradeP = (value, ph) => {
+    if (ph < 7.3) return value <= 10 ? 'Low' : value <= 20 ? 'Medium' : 'High';
+    return value <= 7 ? 'Low' : value <= 25 ? 'Medium' : 'High';
+  };
+  const gradeK = (value) => value <= 117 ? 'Low' : value <= 235 ? 'Medium' : 'High';
+  const nutrientDoses = {
+    Low: { N: 90, P2O5: 60, K2O: 60 },
+    Medium: { N: 60, P2O5: 35, K2O: 45 },
+    High: { N: 30, P2O5: 20, K2O: 30 },
+  };
+  const fertilizerProducts = [
+    { key: 'N', name: 'Urea', grade: '46-0-0', fraction: 0.46, nutrient: 'N' },
+    { key: 'P2O5', name: 'Solophos', grade: '0-18-0', fraction: 0.18, nutrient: 'P₂O₅' },
+    { key: 'K2O', name: 'Muriate of Potash (MOP)', grade: '0-0-60', fraction: 0.60, nutrient: 'K₂O' },
+  ];
+  const formatProductAmount = (kg) => kg < 1
+    ? `${(kg * 1000).toFixed(0)} g`
+    : `${kg.toFixed(2)} kg`;
+
+  const handleCalculateOptimization = () => {
+    setOptimizationError('');
+    const enteredArea = Number(plotAreaInput);
+    if (!plotAreaInput.trim() || !Number.isFinite(enteredArea) || enteredArea <= 0) {
+      setOptimizationError('Enter a plot area greater than zero.');
+      return;
+    }
+    const areaM2 = plotAreaUnit === 'ha' ? enteredArea * 10000 : enteredArea;
+    const areaHa = areaM2 / 10000;
+    const MAX_PLOT_AREA_HA = null; // Set this after the team confirms its tested maximum plot area.
+    if (MAX_PLOT_AREA_HA !== null && areaHa > MAX_PLOT_AREA_HA) {
+      setOptimizationError(`The entered area exceeds the configured maximum of ${MAX_PLOT_AREA_HA} hectares.`);
+      return;
+    }
+    const required = [sensors.ph, sensors.nitrogen, sensors.phosphorus, sensors.potassium];
+    if (required.some((value) => !Number.isFinite(value)) ||
+        sensors.ph < 0 || sensors.ph > 14 ||
+        sensors.nitrogen < 0 || sensors.phosphorus < 0 || sensors.potassium < 0) {
+      setOptimizationError('Valid pH, N, P, and K readings are required. Please re-measure the soil before calculating.');
+      return;
+    }
+    const grades = {
+      N: gradeN(sensors.nitrogen),
+      P: gradeP(sensors.phosphorus, sensors.ph),
+      K: gradeK(sensors.potassium),
+    };
+    const doses = {
+      N: nutrientDoses[grades.N].N,
+      P2O5: nutrientDoses[grades.P].P2O5,
+      K2O: nutrientDoses[grades.K].K2O,
+    };
+    const nutrientKg = {
+      N: doses.N * areaHa,
+      P2O5: doses.P2O5 * areaHa,
+      K2O: doses.K2O * areaHa,
+    };
+    const products = fertilizerProducts.map((product) => {
+      const nutrientAmount = nutrientKg[product.key];
+      const productKg = nutrientAmount / product.fraction;
+      return { ...product, nutrientKg: nutrientAmount, productKg, displayAmount: formatProductAmount(productKg) };
+    });
+    setOptimizationResult({ areaM2, areaHa, grades, doses, nutrientKg, products });
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -921,7 +1387,7 @@ export default function MonitorScreen({
         {/* SOIL PH LEVELS BY DAY BAR CHART */}
         <View style={styles.chartCard}>
           <Text style={styles.chartTitle}>Soil pH Levels by Day</Text>
-          <Text style={styles.chartSubtitle}>Weekly monitoring (Live Supabase Telemetry)</Text>
+          <Text style={styles.chartSubtitle}>Weekly monitoring (Live Telemetry)</Text>
 
           {loadingCharts ? (
             <ActivityIndicator size="small" color="#2d6a4f" style={{ marginVertical: 30 }} />
@@ -934,7 +1400,10 @@ export default function MonitorScreen({
                     It stays fixed and is not clipped by react-native-chart-kit. */}
                 <View style={styles.dailyFixedYAxis}>
                   {dailyPhChartData.yAxisLabels.map((value, index) => (
-                    <Text key={`${value}-${index}`} style={styles.dailyFixedYAxisLabel}>
+                    <Text
+                      key={`daily-ph-y-axis-${index}`}
+                      style={styles.dailyFixedYAxisLabel}
+                    >
                       {value}
                     </Text>
                   ))}
@@ -998,7 +1467,9 @@ export default function MonitorScreen({
         {/* PH TREND OVER TIME: FIXED Y-AXIS + HORIZONTAL SCROLL */}
         <View style={styles.chartCard}>
           <Text style={styles.chartTitle}>pH Trend Over Time</Text>
-          <Text style={styles.chartSubtitle}>24 hours ending at the most recent recorded reading</Text>
+          <Text style={styles.chartSubtitle}>
+                Last 24 hours • Significant pH changes
+              </Text>
 
           {loadingCharts ? (
             <ActivityIndicator size="small" color="#2d6a4f" style={{ marginVertical: 30 }} />
@@ -1009,7 +1480,12 @@ export default function MonitorScreen({
               {/* This Y-axis remains outside the horizontal ScrollView, so it stays fixed. */}
               <View style={styles.fixedYAxis}>
                 {hourlyData.yAxisLabels.map((value, index) => (
-                  <Text key={`${value}-${index}`} style={styles.fixedYAxisLabel}>{value}</Text>
+                  <Text
+                      key={`ph-y-axis-${index}`}
+                      style={styles.fixedYAxisLabel}
+                    >
+                      {value}
+                    </Text>
                 ))}
               </View>
 
@@ -1025,7 +1501,10 @@ export default function MonitorScreen({
                     labels: hourlyData.labels,
                     datasets: [{ data: hourlyData.values }]
                   }}
-                  width={Math.max(screenWidth - 65, hourlyData.values.length * 58)}
+                  width={Math.max(
+                      screenWidth - 65,
+                      hourlyData.values.length * 45
+                    )}
                   height={190}
                   segments={4}
                   withHorizontalLabels={false}
@@ -1037,10 +1516,13 @@ export default function MonitorScreen({
                     color: (opacity = 1) => `rgba(34, 197, 94, ${opacity})`,
                     labelColor: (opacity = 1) => `rgba(100, 116, 139, ${opacity})`,
                     propsForDots: {
-                      r: '5',
-                      strokeWidth: '2',
-                      stroke: '#22c55e'
-                    }
+                        r: '3',
+                        strokeWidth: '1.5',
+                        stroke: '#22c55e'
+                      },
+                      propsForLabels: {
+                        fontSize: 9
+                      }
                   }}
                   bezier
                   style={styles.chartStyle}
@@ -1130,28 +1612,60 @@ export default function MonitorScreen({
                 </Text>
               </View>
 
-              <TouchableOpacity
-                style={styles.restartDeviceBtn}
-                onPress={() => {
-                  showAlert({
-                    title: 'Restart Node',
-                    message: `Send restart command to node ${activeSensorId}?`,
-                    type: 'warning',
-                    showCancel: true,
-                    confirmText: 'Restart',
-                    onConfirm: () => {
-                      showAlert({
-                        title: 'Command Sent',
-                        message: `Restart signal transmitted to node ${activeSensorId}`,
-                        type: 'success'
-                      });
-                    }
-                  });
-                }}
-              >
-                <Ionicons name="refresh-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
-                <Text style={styles.restartDeviceText}>Restart Sensor Node</Text>
-              </TouchableOpacity>
+
+<TouchableOpacity
+  style={styles.restartDeviceBtn}
+  onPress={() => {
+    showAlert({
+      title: 'Reset Sensor Node',
+      message: `Reset the Wi-Fi settings of node ${activeSensorId}? The sensor will disconnect from Wi-Fi and return to BLE provisioning mode. You will need to configure its Wi-Fi again.`,
+      type: 'warning',
+      showCancel: true,
+      confirmText: 'Reset Wi-Fi',
+      onConfirm: async () => {
+        try {
+          if (!activeSensorId) {
+            throw new Error('No connected sensor ID was found.');
+          }
+
+          const result = await djangoSensorRequest(
+            'reset',
+            'POST',
+            {
+              sensor_id: activeSensorId,
+            }
+          );
+
+          console.log('Sensor reset command result:', result);
+
+          showAlert({
+            title: 'Command Queued',
+            message: `Wi-Fi reset command was successfully queued for sensor ${activeSensorId}. The node will reset when it receives the command.`,
+            type: 'success',
+          });
+
+        } catch (error) {
+          console.log('Error sending sensor reset command:', error);
+
+          showAlert({
+            title: 'Reset Failed',
+            message: error.message || 'Could not send the reset command.',
+            type: 'danger',
+          });
+        }
+      }
+    });
+  }}
+>
+  <Ionicons
+    name="refresh-outline"
+    size={14}
+    color="#334155"
+    style={{ marginRight: 6 }}
+  />
+  <Text style={styles.restartDeviceText}>Restart Sensor Node</Text>
+</TouchableOpacity>
+
             </View>
           )}
         </View>
@@ -1252,7 +1766,7 @@ export default function MonitorScreen({
               <ScrollView style={{ maxHeight: 260, marginVertical: 10 }}>
                 {availableSensors.map((item, index) => (
                   <TouchableOpacity
-                    key={index}
+                    key={item.sensor_id}
                     style={styles.sensorSelectItem}
                     onPress={() => handleSelectSensor(item.sensor_id)}
                   >
@@ -1330,7 +1844,7 @@ export default function MonitorScreen({
               <ScrollView style={{ maxHeight: 180, marginVertical: 10 }}>
                 {scannedDevices.map((device, index) => (
                   <TouchableOpacity
-                    key={index}
+                    key={device.id}
                     style={styles.sensorSelectItem}
                     onPress={() => configureDeviceWifi(device)}
                   >
@@ -1360,78 +1874,84 @@ export default function MonitorScreen({
         </TouchableOpacity>
       </Modal>
 
-      {/* SOIL OPTIMIZATION RECOMMENDATIONS MODAL */}
+      {/* SOIL OPTIMIZATION AND FERTILIZER COMPUTATION MODAL */}
       <Modal
         visible={showOptimizeModal}
-        transparent={true}
-        animationType="fade"
+        transparent
+        animationType="slide"
         onRequestClose={() => setShowOptimizeModal(false)}
       >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowOptimizeModal(false)}
-        >
-          <TouchableOpacity activeOpacity={1} style={styles.modalCard}>
-           
-            <View style={styles.recHeaderRow}>
-              <View style={styles.lightbulbBadge}>
-                <Ionicons name="bulb" size={20} color="#eab308" />
-              </View>
-              <Text style={styles.recTitle}>Fertilizer Recommendations</Text>
-            </View>
-
-            <Text style={styles.recSubtitle}>
-              For lot size: {plotSize} Based on soil test results
-            </Text>
-
-            <View style={styles.recBoxLime}>
-              <View style={styles.recBoxTopRow}>
-                <View style={styles.alertIconBadge}>
-                  <Ionicons name="warning" size={16} color="#ef4444" />
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '90%' }]}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <View style={styles.recHeaderRow}>
+                <View style={styles.lightbulbBadge}>
+                  <Ionicons name="leaf" size={20} color="#eab308" />
                 </View>
-                <Text style={styles.recItemTitle}>Agricultural Lime</Text>
-                <View style={styles.priorityTag}>
-                  <Text style={styles.priorityTagText}>PRIORITY</Text>
-                </View>
+                <Text style={styles.recTitle}>Optimize Soil Health</Text>
               </View>
+              <Text style={styles.recSubtitle}>Enter the area of {currentPlot} to calculate fertilizer amounts from the latest valid NPK readings.</Text>
 
-              <Text style={styles.sackCount}>{limeSacksNeeded} {limeSacksNeeded === 1 ? 'sack' : 'sacks'}</Text>
-              <Text style={styles.recDescText}>
-                pH {sensors.ph !== null ? Number(sensors.ph).toFixed(1) : '6.0'} is acidic. Adjust pH to optimal range (6.5-7.0) first.
-              </Text>
-            </View>
-
-            <View style={styles.recBoxUrea}>
-              <View style={styles.recBoxTopRow}>
-                <View style={styles.numberIconBadge}>
-                  <Text style={styles.numberIconText}>2</Text>
-                </View>
-                <Text style={styles.recItemTitle}>Urea (46-0-0)</Text>
+              <Text style={styles.sectionHeaderLabel}>Plot area</Text>
+              <TextInput
+                style={styles.inputField}
+                placeholder="Enter plot area"
+                placeholderTextColor="#94a3b8"
+                keyboardType="decimal-pad"
+                value={plotAreaInput}
+                onChangeText={(value) => { setPlotAreaInput(value); setOptimizationResult(null); setOptimizationError(''); }}
+              />
+              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+                <TouchableOpacity style={[styles.areaUnitButton, plotAreaUnit === 'm2' && styles.areaUnitButtonActive]} onPress={() => { setPlotAreaUnit('m2'); setOptimizationResult(null); }}>
+                  <Text style={[styles.areaUnitText, plotAreaUnit === 'm2' && styles.areaUnitTextActive]}>Square meters (m²)</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.areaUnitButton, plotAreaUnit === 'ha' && styles.areaUnitButtonActive]} onPress={() => { setPlotAreaUnit('ha'); setOptimizationResult(null); }}>
+                  <Text style={[styles.areaUnitText, plotAreaUnit === 'ha' && styles.areaUnitTextActive]}>Hectares (ha)</Text>
+                </TouchableOpacity>
               </View>
+              {optimizationError ? <Text style={styles.optimizationError}>{optimizationError}</Text> : null}
+              <TouchableOpacity style={styles.closeModalButton} onPress={handleCalculateOptimization}>
+                <Text style={styles.closeModalButtonText}>Calculate Fertilizer Recommendations</Text>
+              </TouchableOpacity>
 
-              <Text style={styles.sackCount}>{ureaSacksNeeded} {ureaSacksNeeded === 1 ? 'sack' : 'sacks'}</Text>
-              <Text style={styles.recDescText}>
-                Nitrogen reading is {sensors.nitrogen !== null ? `${Math.round(sensors.nitrogen)} ppm` : 'below threshold'}. Urea provides high nitrogen content.
-              </Text>
-            </View>
-
-            <View style={styles.recBoxTip}>
-              <Text style={styles.tipText}>
-                <Text style={styles.tipTitle}><Ionicons name="warning" size={14} color="#b45309" /> pH Prioritization: </Text>
-                Apply lime treatment first to correct soil acidity. This prevents nutrient lockout and ensures NPK fertilizers will be effective.
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.closeModalButton}
-              onPress={() => setShowOptimizeModal(false)}
-            >
-              <Text style={styles.closeModalButtonText}>Close Recommendations</Text>
-            </TouchableOpacity>
-
-          </TouchableOpacity>
-        </TouchableOpacity>
+              {optimizationResult && (
+                <View style={{ marginTop: 18 }}>
+                  <Text style={styles.sectionHeaderLabel}>Soil assessment</Text>
+                  <Text style={styles.recDescText}>pH: {sensors.ph.toFixed(2)} ({phStatus.label}) · P method: {sensors.ph < 7.3 ? 'Bray 1' : 'Olsen'}</Text>
+                  {phAdvisory ? <View style={styles.recBoxTip}><Text style={styles.recDescText}>{phAdvisory}</Text></View> : <Text style={styles.recDescText}>pH is within the 6.0–7.0 advisory range.</Text>}
+                  <Text style={styles.sectionHeaderLabel}>NPK grades and default doses</Text>
+                  {[
+                    { name: 'Nitrogen (N)', value: sensors.nitrogen, unit: 'mg/kg', grade: optimizationResult.grades.N, dose: optimizationResult.doses.N },
+                    { name: 'Phosphorus (P)', value: sensors.phosphorus, unit: 'ppm', grade: optimizationResult.grades.P, dose: optimizationResult.doses.P2O5 },
+                    { name: 'Potassium (K)', value: sensors.potassium, unit: 'ppm', grade: optimizationResult.grades.K, dose: optimizationResult.doses.K2O },
+                  ].map((item) => (
+                    <View key={`grade-${item.name}`} style={styles.resultRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.resultTitle}>{item.name}: {item.value.toFixed(2)} {item.unit}</Text>
+                        <Text style={styles.resultSub}>Grade: {item.grade}</Text>
+                      </View>
+                      <Text style={styles.resultDose}>{item.dose} kg/ha</Text>
+                    </View>
+                  ))}
+                  <Text style={styles.sectionHeaderLabel}>Fertilizer amounts for {optimizationResult.areaM2.toLocaleString()} m² ({optimizationResult.areaHa.toFixed(4)} ha)</Text>
+                  {optimizationResult.products.map((product) => (
+                    <View key={`product-${product.key}`} style={styles.productResultCard}>
+                      <Text style={styles.resultTitle}>{product.name} ({product.grade})</Text>
+                      <Text style={styles.resultSub}>{product.nutrient} required: {product.nutrientKg.toFixed(3)} kg</Text>
+                      <Text style={styles.productAmount}>{product.displayAmount}</Text>
+                    </View>
+                  ))}
+                  <View style={styles.recBoxTip}>
+                    <Text style={styles.tipText}>These are draft default rates from the supplied JJMAP specification, not crop-specific prescriptions. Confirm the dose table, product grades, N test method, maximum plot area, and recommendations with DA/BSWM or a qualified agronomist before field application. No lime rate is calculated.</Text>
+                  </View>
+                </View>
+              )}
+              <TouchableOpacity style={[styles.closeModalButton, { marginTop: 12, backgroundColor: '#64748b' }]} onPress={() => setShowOptimizeModal(false)}>
+                <Text style={styles.closeModalButtonText}>Close</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
 
       <MobileFooter currentTab={currentTab} onSelectTab={onSelectTab} />
@@ -1730,6 +2250,17 @@ const styles = StyleSheet.create({
   },
   recTitle: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
   recSubtitle: { fontSize: 13, color: '#64748b', marginBottom: 16 },
+  areaUnitButton: { flex: 1, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 10, alignItems: 'center' },
+  areaUnitButtonActive: { backgroundColor: '#dcfce7', borderColor: '#16a34a' },
+  areaUnitText: { color: '#475569', fontSize: 12, fontWeight: '600' },
+  areaUnitTextActive: { color: '#166534' },
+  optimizationError: { color: '#dc2626', fontSize: 12, marginBottom: 10 },
+  resultRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f8fafc', borderRadius: 12, padding: 12, marginBottom: 8 },
+  resultTitle: { color: '#0f172a', fontSize: 13, fontWeight: '700' },
+  resultSub: { color: '#64748b', fontSize: 11, marginTop: 3 },
+  resultDose: { color: '#166534', fontSize: 13, fontWeight: '700' },
+  productResultCard: { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#bbf7d0', borderRadius: 12, padding: 12, marginBottom: 8 },
+  productAmount: { color: '#166534', fontSize: 22, fontWeight: '800', marginTop: 5 },
 
   recBoxLime: {
     backgroundColor: '#fef2f2',
@@ -1808,3 +2339,4 @@ const styles = StyleSheet.create({
   cardAlertConfirmBtn: { flex: 1, backgroundColor: '#10b981', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
   cardAlertConfirmText: { fontSize: 13, fontWeight: 'bold', color: '#ffffff' }
 })
+

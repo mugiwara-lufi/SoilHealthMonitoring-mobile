@@ -51,6 +51,7 @@ export default function App() {
       console.error('Fetch Users Error:', error);
     }
   };
+  
 
   // -------------------- FETCH PLOTS --------------------
   const fetchPlots = async (manualToken = null) => {
@@ -679,24 +680,26 @@ export default function App() {
           token={token}
         />
       ) : currentScreen === 'Monitor' ? (
-        <MonitorScreen
-          plotData={selectedPlot}
-          token={token}
-          onAddSensor={handleAddSensor}
-          onRemoveSensor={handleRemoveSensor}
-          onDisconnectSensor={handleRemoveSensor}
-          onUpdatePlotSensor={handleUpdatePlotSensor}
-          onRefreshData={() => fetchPlots(token)}
-          currentTab={getCurrentTabName()}
-          onSelectTab={handleSelectTab}
-          onBack={() =>
-            setCurrentScreen(
-              user?.role?.toLowerCase() === 'admin' || user?.is_staff
-                ? 'Admin'
-                : 'Explore'
-            )
-          }
-        />
+<MonitorScreen
+  plotData={selectedPlot}
+  token={token}
+  currentAdminId={currentAdminId}
+  currentAdminUsername={currentAdminUsername}
+  onAddSensor={handleAddSensor}
+  onRemoveSensor={handleRemoveSensor}
+  onDisconnectSensor={handleRemoveSensor}
+  onUpdatePlotSensor={handleUpdatePlotSensor}
+  onRefreshData={() => fetchPlots(token)}
+  currentTab={getCurrentTabName()}
+  onSelectTab={handleSelectTab}
+  onBack={() =>
+    setCurrentScreen(
+      user?.role?.toLowerCase() === 'admin' || user?.is_staff
+        ? 'Admin'
+        : 'Explore'
+    )
+  }
+/>
       ) : (
         <ProfileScreen
           user={user}

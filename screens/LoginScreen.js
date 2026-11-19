@@ -821,7 +821,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   modalCancelText: {
-    fontSize: 14,
+    fontSize: 14, 
     fontWeight: '600',
     color: '#94a3b8',
   },

@@ -227,7 +227,7 @@ export default function RegistrationScreen({ onRegister, onBackToLogin, defaultR
             <Ionicons name="person-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
             <TextInput
               style={styles.input}
-              placeholder="johndoe123"
+              placeholder="username"
               placeholderTextColor="#94a3b8"
               value={formData.username}
               onChangeText={t => setFormData({ ...formData, username: t })}
@@ -240,7 +240,7 @@ export default function RegistrationScreen({ onRegister, onBackToLogin, defaultR
             <Ionicons name="text-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
             <TextInput
               style={styles.input}
-              placeholder="John"
+              placeholder="First Name"
               placeholderTextColor="#94a3b8"
               value={formData.first_name}
               onChangeText={t => setFormData({ ...formData, first_name: t })}
@@ -252,7 +252,7 @@ export default function RegistrationScreen({ onRegister, onBackToLogin, defaultR
             <Ionicons name="text-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
             <TextInput
               style={styles.input}
-              placeholder="Doe"
+              placeholder="Last Name"
               placeholderTextColor="#94a3b8"
               value={formData.last_name}
               onChangeText={t => setFormData({ ...formData, last_name: t })}
@@ -264,7 +264,7 @@ export default function RegistrationScreen({ onRegister, onBackToLogin, defaultR
             <Ionicons name="mail-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
             <TextInput
               style={styles.input}
-              placeholder="your.email@example.com"
+              placeholder="email"
               placeholderTextColor="#94a3b8"
               value={formData.email}
               onChangeText={t => setFormData({ ...formData, email: t })}
@@ -275,12 +275,12 @@ export default function RegistrationScreen({ onRegister, onBackToLogin, defaultR
 
           {!isAdminRole && (
             <>
-              <Text style={styles.inputLabel}>Farm Owner's Email (Optional)</Text>
+              <Text style={styles.inputLabel}>Farm Owner's Email</Text>
               <View style={styles.inputWrapper}>
                 <Ionicons name="business-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="owner@farm.com"
+                  placeholder="farm owner's email"
                   placeholderTextColor="#94a3b8"
                   value={formData.owner_email}
                   onChangeText={t => setFormData({ ...formData, owner_email: t })}
