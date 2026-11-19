@@ -93,8 +93,6 @@ export default function MonitorScreen({
 
   const [loadingCharts, setLoadingCharts] = useState(false);
   const [showOptimizeModal, setShowOptimizeModal] = useState(false);
-  const [plotAreaInput, setPlotAreaInput] = useState('');
-  const [plotAreaUnit, setPlotAreaUnit] = useState('m2');
   const [optimizationResult, setOptimizationResult] = useState(null);
   const [optimizationError, setOptimizationError] = useState('');
   const [showSensorModal, setShowSensorModal] = useState(false);
@@ -1207,25 +1205,29 @@ console.log('DETECTED SENSOR ID:', sensorId);
     ? `${(kg * 1000).toFixed(0)} g`
     : `${kg.toFixed(2)} kg`;
 
-  const handleCalculateOptimization = () => {
+  const handleOpenOptimization = () => {
     setOptimizationError('');
-    const enteredArea = Number(plotAreaInput);
-    if (!plotAreaInput.trim() || !Number.isFinite(enteredArea) || enteredArea <= 0) {
-      setOptimizationError('Enter a plot area greater than zero.');
+    setOptimizationResult(null);
+    setShowOptimizeModal(true);
+
+    // Always calculate from the selected plot's saved area in the database.
+    const areaM2 = Number(plotData?.area_m2);
+    if (!Number.isFinite(areaM2) || areaM2 <= 0) {
+      setOptimizationError('This plot does not have a valid saved area. Update the plot area before requesting fertilizer recommendations.');
       return;
     }
-    const areaM2 = plotAreaUnit === 'ha' ? enteredArea * 10000 : enteredArea;
+
     const areaHa = areaM2 / 10000;
     const MAX_PLOT_AREA_HA = null; // Set this after the team confirms its tested maximum plot area.
     if (MAX_PLOT_AREA_HA !== null && areaHa > MAX_PLOT_AREA_HA) {
-      setOptimizationError(`The entered area exceeds the configured maximum of ${MAX_PLOT_AREA_HA} hectares.`);
+      setOptimizationError(`The plot area exceeds the configured maximum of ${MAX_PLOT_AREA_HA} hectares.`);
       return;
     }
     const required = [sensors.ph, sensors.nitrogen, sensors.phosphorus, sensors.potassium];
     if (required.some((value) => !Number.isFinite(value)) ||
         sensors.ph < 0 || sensors.ph > 14 ||
         sensors.nitrogen < 0 || sensors.phosphorus < 0 || sensors.potassium < 0) {
-      setOptimizationError('Valid pH, N, P, and K readings are required. Please re-measure the soil before calculating.');
+      setOptimizationError('Valid pH, N, P, and K readings are required. Please re-measure the soil before requesting recommendations.');
       return;
     }
     const grades = {
@@ -1376,7 +1378,7 @@ console.log('DETECTED SENSOR ID:', sensorId);
 
           <TouchableOpacity
             style={styles.optimizeButton}
-            onPress={() => setShowOptimizeModal(true)}
+            onPress={handleOpenOptimization}
             activeOpacity={0.8}
           >
             <Ionicons name="flash" size={18} color="#ffffff" style={{ marginRight: 6 }} />
@@ -1888,31 +1890,22 @@ console.log('DETECTED SENSOR ID:', sensorId);
                 <View style={styles.lightbulbBadge}>
                   <Ionicons name="leaf" size={20} color="#eab308" />
                 </View>
-                <Text style={styles.recTitle}>Optimize Soil Health</Text>
+                <Text style={styles.recTitle}>Fertilizer Recommendations</Text>
               </View>
-              <Text style={styles.recSubtitle}>Enter the area of {currentPlot} to calculate fertilizer amounts from the latest valid NPK readings.</Text>
+              <Text style={styles.recSubtitle}>Fertilizer recommendations for {currentPlot}, based on its saved plot area and the latest available soil readings.</Text>
 
-              <Text style={styles.sectionHeaderLabel}>Plot area</Text>
-              <TextInput
-                style={styles.inputField}
-                placeholder="Enter plot area"
-                placeholderTextColor="#94a3b8"
-                keyboardType="decimal-pad"
-                value={plotAreaInput}
-                onChangeText={(value) => { setPlotAreaInput(value); setOptimizationResult(null); setOptimizationError(''); }}
-              />
-              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-                <TouchableOpacity style={[styles.areaUnitButton, plotAreaUnit === 'm2' && styles.areaUnitButtonActive]} onPress={() => { setPlotAreaUnit('m2'); setOptimizationResult(null); }}>
-                  <Text style={[styles.areaUnitText, plotAreaUnit === 'm2' && styles.areaUnitTextActive]}>Square meters (m²)</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.areaUnitButton, plotAreaUnit === 'ha' && styles.areaUnitButtonActive]} onPress={() => { setPlotAreaUnit('ha'); setOptimizationResult(null); }}>
-                  <Text style={[styles.areaUnitText, plotAreaUnit === 'ha' && styles.areaUnitTextActive]}>Hectares (ha)</Text>
-                </TouchableOpacity>
+              <View style={styles.resultRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.resultTitle}>Saved plot area</Text>
+                  <Text style={styles.resultSub}>
+                    {Number.isFinite(Number(plotData?.area_m2)) && Number(plotData?.area_m2) > 0
+                      ? `${Number(plotData.area_m2).toLocaleString()} m² (${(Number(plotData.area_m2) / 10000).toFixed(4)} ha)`
+                      : 'Area not set'}
+                  </Text>
+                </View>
+                <Ionicons name="resize-outline" size={20} color="#2d6a4f" />
               </View>
               {optimizationError ? <Text style={styles.optimizationError}>{optimizationError}</Text> : null}
-              <TouchableOpacity style={styles.closeModalButton} onPress={handleCalculateOptimization}>
-                <Text style={styles.closeModalButtonText}>Calculate Fertilizer Recommendations</Text>
-              </TouchableOpacity>
 
               {optimizationResult && (
                 <View style={{ marginTop: 18 }}>
@@ -1941,9 +1934,6 @@ console.log('DETECTED SENSOR ID:', sensorId);
                       <Text style={styles.productAmount}>{product.displayAmount}</Text>
                     </View>
                   ))}
-                  <View style={styles.recBoxTip}>
-                    <Text style={styles.tipText}>These are draft default rates from the supplied JJMAP specification, not crop-specific prescriptions. Confirm the dose table, product grades, N test method, maximum plot area, and recommendations with DA/BSWM or a qualified agronomist before field application. No lime rate is calculated.</Text>
-                  </View>
                 </View>
               )}
               <TouchableOpacity style={[styles.closeModalButton, { marginTop: 12, backgroundColor: '#64748b' }]} onPress={() => setShowOptimizeModal(false)}>
@@ -2250,10 +2240,6 @@ const styles = StyleSheet.create({
   },
   recTitle: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
   recSubtitle: { fontSize: 13, color: '#64748b', marginBottom: 16 },
-  areaUnitButton: { flex: 1, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 10, alignItems: 'center' },
-  areaUnitButtonActive: { backgroundColor: '#dcfce7', borderColor: '#16a34a' },
-  areaUnitText: { color: '#475569', fontSize: 12, fontWeight: '600' },
-  areaUnitTextActive: { color: '#166534' },
   optimizationError: { color: '#dc2626', fontSize: 12, marginBottom: 10 },
   resultRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f8fafc', borderRadius: 12, padding: 12, marginBottom: 8 },
   resultTitle: { color: '#0f172a', fontSize: 13, fontWeight: '700' },

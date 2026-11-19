@@ -96,6 +96,11 @@ export default function App() {
         return {
           id: plotId,
           name: plot.name || '',
+
+  // FARM AREA
+  area_m2: plot.area_m2 != null
+    ? Number(plot.area_m2)
+    : null,
           crop: plot.crop_type || plot.crop || '',
           crop_type: plot.crop_type || plot.crop || '',
           farmer: plot.farmer ? String(plot.farmer) : (plot.farmer_id ? String(plot.farmer_id) : null),
@@ -363,81 +368,87 @@ export default function App() {
   };
 
   // -------------------- ADD PLOT --------------------
-  const handleAddPlot = async (newPlot) => {
-    if (!token) {
-      Alert.alert('Login Required', 'Please log in before adding a plot.');
-      return false;
+// -------------------- ADD PLOT --------------------
+const handleAddPlot = async (newPlot) => {
+  if (!token) {
+    Alert.alert('Login Required', 'Please log in before adding a plot.');
+    return false;
+  }
+
+  const name = newPlot?.name?.trim();
+  const location = newPlot?.location?.trim();
+  const areaM2 = Number(newPlot?.area_m2);
+
+  if (
+    !name ||
+    !location ||
+    !Number.isFinite(areaM2) ||
+    areaM2 <= 0
+  ) {
+    Alert.alert(
+      'Missing Information',
+      'Plot name, location, and a valid plot area greater than zero are required.'
+    );
+    return false;
+  }
+
+  try {
+    const response = await fetch(`${BASE_URL}/plots/`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Token ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        name,
+        area_m2: areaM2,
+        location,
+        sensor_id: null,
+      }),
+    });
+
+    if (response.ok) {
+      await fetchPlots(token);
+      Alert.alert('Success', 'Plot saved successfully!');
+      return true;
     }
 
-    const name = newPlot?.name?.trim();
-    const cropType = newPlot?.crop?.trim();
-    const location = newPlot?.location?.trim();
+    const contentType = response.headers.get('content-type');
+    let errorMessage = `The server returned status ${response.status}.`;
 
-    if (!name || !cropType || !location) {
-      Alert.alert(
-        'Missing Information',
-        'Plot name, crop type, and location are required.'
-      );
-      return false;
-    }
+    if (contentType?.includes('application/json')) {
+      const errorData = await response.json();
+      errorMessage = Object.entries(errorData)
+        .map(([field, errors]) => {
+          const message = Array.isArray(errors)
+            ? errors.join(', ')
+            : typeof errors === 'object'
+              ? JSON.stringify(errors)
+              : String(errors);
 
-    try {
-      const response = await fetch(`${BASE_URL}/plots/`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Token ${token}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          name: name,
-          crop_type: cropType,
-          location: location,
-          sensor_id: null,
-        }),
-      });
-
-      if (response.ok) {
-        await fetchPlots(token);
-        Alert.alert('Success', 'Plot saved successfully!');
-        return true;
+          return `${field}: ${message}`;
+        })
+        .join('\n');
+    } else {
+      const errorText = await response.text();
+      if (errorText) {
+        errorMessage = `${errorMessage}\n${errorText.slice(0, 300)}`;
       }
-
-      const contentType = response.headers.get('content-type');
-      let errorMessage = `The server returned status ${response.status}.`;
-
-      if (contentType?.includes('application/json')) {
-        const errorData = await response.json();
-        errorMessage = Object.entries(errorData)
-          .map(([field, errors]) => {
-            const message = Array.isArray(errors)
-              ? errors.join(', ')
-              : typeof errors === 'object'
-                ? JSON.stringify(errors)
-                : String(errors);
-
-            return `${field}: ${message}`;
-          })
-          .join('\n');
-      } else {
-        const errorText = await response.text();
-        if (errorText) {
-          errorMessage = `${errorMessage}\n${errorText.slice(0, 300)}`;
-        }
-      }
-
-      console.error('Add Plot Failed:', errorMessage);
-      Alert.alert('Error Adding Plot', errorMessage);
-      return false;
-    } catch (error) {
-      console.error('Add Plot Error:', error);
-      Alert.alert(
-        'Connection Error',
-        'Could not connect to the server. Check that Django is running and the API address is correct.'
-      );
-      return false;
     }
-  };
+
+    console.error('Add Plot Failed:', errorMessage);
+    Alert.alert('Error Adding Plot', errorMessage);
+    return false;
+  } catch (error) {
+    console.error('Add Plot Error:', error);
+    Alert.alert(
+      'Connection Error',
+      'Could not connect to the server. Check that Django is running and the API address is correct.'
+    );
+    return false;
+  }
+};
 
   const handleAddSensor = async () => {
     Alert.alert('Use Monitor', 'Connect a physical sensor from the Monitor screen.');

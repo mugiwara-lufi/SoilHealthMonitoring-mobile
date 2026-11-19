@@ -628,7 +628,11 @@ export default function AdminScreen({
                         <Ionicons name="leaf-outline" size={20} color="#10b981" style={styles.cropIcon} />
                         <View>
                           <Text style={styles.plotTitle}>{plot.name}</Text>
-                          <Text style={styles.plotSubtitle}>{plot.crop_type || plot.crop || 'Crop N/A'}</Text>
+                          <Text style={styles.plotSubtitle}>
+  {plot.area_m2 != null && Number.isFinite(Number(plot.area_m2))
+    ? `${Number(plot.area_m2).toLocaleString()} m²`
+    : 'Area not set'}
+</Text>
                         </View>
                       </View>
 
@@ -1150,7 +1154,11 @@ export default function AdminScreen({
                             />
                             <View style={{ flex: 1 }}>
                               <Text style={styles.plotCheckTitle}>{plot.name}</Text>
-                              <Text style={styles.plotCheckSub}>{plot.crop_type || plot.crop || 'Crop N/A'}</Text>
+                              <Text style={styles.plotCheckSub}>
+  {plot.area_m2 != null && Number.isFinite(Number(plot.area_m2))
+    ? `${Number(plot.area_m2).toLocaleString()} m²`
+    : 'Area not set'}
+</Text>
                             </View>
                           </TouchableOpacity>
                         );

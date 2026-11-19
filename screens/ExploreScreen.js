@@ -39,7 +39,7 @@ export default function ExploreScreen({
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newPlotName, setNewPlotName] = useState('');
-  const [newCropType, setNewCropType] = useState('');
+  const [newPlotArea, setNewPlotArea] = useState('');
   const [newLocation, setNewLocation] = useState('');
   const [searchText, setSearchText] = useState('');
 
@@ -218,69 +218,67 @@ export default function ExploreScreen({
     const statusInfo = getDetailedPlotStatus(plot);
     return (
       plot.name.toLowerCase().includes(searchLower) ||
-      (plot.crop || plot.crop_type || '').toLowerCase().includes(searchLower) ||
       (plot.location || '').toLowerCase().includes(searchLower) ||
       statusInfo.label.toLowerCase().includes(searchLower)
     );
   });
 
-  const submitNewPlot = async () => {
-    const plotName = newPlotName.trim();
-    const cropType = newCropType.trim();
-    const location = newLocation.trim();
+const submitNewPlot = async () => {
+  const plotName = newPlotName.trim();
+  const areaM2 = Number(newPlotArea);
+  const location = newLocation.trim();
 
-    if (!plotName || !cropType || !location) {
-      showAlert({
-        title: 'Missing Information',
-        message: 'Please enter the plot name, crop type, and location.',
-        type: 'warning'
-      });
-      return;
-    }
+  if (
+    !plotName ||
+    !newPlotArea.trim() ||
+    !Number.isFinite(areaM2) ||
+    areaM2 <= 0 ||
+    !location
+  ) {
+    showAlert({
+      title: 'Missing Information',
+      message: 'Please enter the plot name, a valid plot area greater than zero, and location.',
+      type: 'warning'
+    });
+    return;
+  }
 
-    const newPlot = {
-      name: plotName,
-      crop: cropType,
-      crop_type: cropType,
-      location: location,
-      sensor_id: null,
-      farmer: currentAdminId || null,
-      farmer_username: currentAdminUsername || null,
-      owner_email: adminEmail,
-      icon: 'leaf',
-      color: '#64748b',
-      records: [],
-      sensors: {
-        moisture: 'N/A',
-        temp: 'N/A',
-        ph: 'N/A',
-        humidity: 'N/A',
-        nitrogen: 'N/A',
-        phosphorus: 'N/A',
-        potassium: 'N/A',
-        battery: '0%',
-        signal: 'No Signal',
-      },
-    };
-
-    try {
-      const saved = await onAddPlot(newPlot);
-
-      if (saved) {
-        setNewPlotName('');
-        setNewCropType('');
-        setNewLocation('');
-        setShowAddForm(false);
-      }
-    } catch (error) {
-      console.error('Submit New Plot Error:', error);
-      showAlert({
-        title: 'Error',
-        message: 'Could not add the plot. Please try again.',
-        type: 'danger'
-      });
+  const newPlot = {
+    name: plotName,
+    area_m2: areaM2,
+    location: location,
+    sensor_id: null,
+    farmer: currentAdminId || null,
+    farmer_username: currentAdminUsername || null,
+    owner_email: adminEmail,
+    icon: 'leaf',
+    color: '#64748b',
+    records: [],
+    sensors: {
+      moisture: 'N/A',
+      temp: 'N/A',
+      ph: 'N/A',
     }
   };
+
+  try {
+    const saved = await onAddPlot(newPlot);
+
+    if (saved) {
+      setNewPlotName('');
+      setNewPlotArea('');
+      setNewLocation('');
+      setShowAddForm(false);
+    }
+  } catch (error) {
+    console.error('Submit New Plot Error:', error);
+    showAlert({
+      title: 'Error',
+      message: 'Could not add the plot. Please try again.',
+      type: 'danger'
+    });
+  }
+};
 
   const confirmDelete = (id, name) => {
     showAlert({
@@ -307,7 +305,11 @@ export default function ExploreScreen({
 
         <View style={styles.textContainer}>
           <Text style={styles.plotName}>{item.name}</Text>
-          <Text style={styles.cropType}>{item.crop || item.crop_type}</Text>
+          <Text style={styles.cropType}>
+  {item.area_m2 != null && Number.isFinite(Number(item.area_m2))
+    ? `${Number(item.area_m2).toLocaleString()} m²`
+    : 'Area not set'}
+</Text>
           <Text style={styles.locationText}>
             <Ionicons name="location-outline" size={12} color="#94a3b8" /> {item.location || 'No location'}
           </Text>
@@ -389,12 +391,13 @@ export default function ExploreScreen({
               />
 
               <TextInput
-                style={styles.input}
-                placeholder="Enter Crop Type *"
-                placeholderTextColor="#94a3b8"
-                value={newCropType}
-                onChangeText={setNewCropType}
-              />
+  style={styles.input}
+  placeholder="Enter Plot Area (m²) *"
+  placeholderTextColor="#94a3b8"
+  value={newPlotArea}
+  onChangeText={setNewPlotArea}
+  keyboardType="decimal-pad"
+/>
 
               <TextInput
                 style={styles.input}
